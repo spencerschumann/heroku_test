@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <title>Pixelogic PCB - Pixel Logic Simulator</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#1a1a1a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Pixelogic">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="icon" type="image/png" href="icon-192.png">
+
+    <link rel="stylesheet" href="pixelogic-pcb.css">
+</head>
+
+<body>
+    <div id="app">
+        <!-- One fixed-height row that never wraps: run controls on the left,
+             view controls and the overflow menu on the right. -->
+        <div id="topbar">
+            <div class="bar-group">
+                <button id="playPauseBtn" class="icon-btn" title="Play/Pause (P)" aria-pressed="false">&#x25B6;</button>
+                <button id="stepBtn" class="icon-btn" title="Step (Space)">&#x23ED;</button>
+                <span id="tickCount" class="tick-count">t=0</span>
+            </div>
+
+            <div class="bar-group speed-group">
+                <input id="intervalSlider" type="range" min="0" max="100" value="50" title="Simulation speed"
+                    aria-label="Simulation speed">
+                <span id="intervalValue" class="slider-value"></span>
+            </div>
+
+            <div class="bar-spacer"></div>
+
+            <div class="bar-group">
+                <button id="undoBtn" class="icon-btn" title="Undo (Ctrl+Z)" disabled>&#x21B6;</button>
+                <button id="redoBtn" class="icon-btn" title="Redo (Ctrl+Shift+Z)" disabled>&#x21B7;</button>
+            </div>
+
+            <div class="bar-group zoom-group">
+                <button id="zoomOutBtn" class="icon-btn" title="Zoom out (-)">&minus;</button>
+                <span id="zoomValue" class="zoom-value"
+                    title="Scroll or arrow keys pan; Ctrl+scroll (or pinch) zooms at the cursor; Shift-drag or middle-drag also pans">100%</span>
+                <button id="zoomInBtn" class="icon-btn" title="Zoom in (+)">+</button>
+            </div>
+
+            <button id="menuBtn" class="icon-btn" title="More" aria-haspopup="menu"
+                aria-expanded="false">&#x22EF;</button>
+        </div>
+
+        <!-- Tools sit beside the canvas on wide screens and below it on narrow
+             ones, so the canvas keeps whichever dimension is scarce. -->
+        <div id="workspace">
+            <div id="toolrail" role="toolbar" aria-label="Tools">
+                <div class="tool-group" aria-label="Materials">
+                    <button class="tool-btn swatch-tool" data-tool="conductor" data-key="1"
+                        title="Conductor (1) — right-drag always erases" style="--swatch:#3fae4a">Conductor</button>
+                    <button class="tool-btn swatch-tool" data-tool="gold" data-key="2" title="Mux control band (2)"
+                        style="--swatch:#e6b800">MUX Control</button>
+                    <button class="tool-btn swatch-tool" data-tool="gray" data-key="3" title="Mux body band (3)"
+                        style="--swatch:#2b2b2b">MUX Body</button>
+                    <button class="tool-btn swatch-tool" data-tool="pos" data-key="4" title="+V source (4)"
+                        style="--swatch:#ffffff">+V</button>
+                    <button class="tool-btn swatch-tool" data-tool="neg" data-key="5" title="&minus;V source (5)"
+                        style="--swatch:#000000">&minus;V</button>
+                    <button class="tool-btn swatch-tool" data-tool="led" data-key="6" title="LED output (6)"
+                        style="--swatch:#ff2a2a">LED</button>
+                    <button class="tool-btn swatch-tool" data-tool="switch" data-key="7"
+                        title="Momentary switch input (7)" style="--swatch:#9aa0a6">Switch</button>
+                    <button class="tool-btn swatch-tool" data-tool="toggle" data-key="T" title="Toggle switch input (T)"
+                        style="--swatch:#565b60">Toggle</button>
+                    <button class="tool-btn swatch-tool" data-tool="insulator" data-key="8"
+                        title="Erase / Insulator (8)" style="--swatch:#0d3b0d">Erase</button>
+                </div>
+
+                <div class="tool-group" aria-label="Modes">
+                    <button class="tool-btn glyph-tool" data-tool="interact" data-key="I" data-glyph="I"
+                        title="Interact (I) — runs the simulation. Hold a momentary switch or click a toggle; drag to pan the view">Interact</button>
+                    <button class="tool-btn glyph-tool" data-tool="select" data-key="S" data-glyph="S"
+                        title="Select (S) — drag a rectangle">Select</button>
+                    <button class="tool-btn glyph-tool" data-tool="rearrange" data-key="A" data-glyph="A"
+                        title="Rearrange (A) — drag a mux, a straight wire segment, a pad, or a source; connections re-route to follow. Drag from empty space to rubber-band several, Ctrl/Cmd-click (or press and hold on touch) to add/remove one, then drag any of them to move the group. R rotates, Esc deselects">Rearrange</button>
+                    <button class="tool-btn glyph-tool" data-tool="paste" data-key="V" data-glyph="V" id="pasteBtn"
+                        title="Paste (V) — stamps the clipboard immediately; drag it into place, then tap elsewhere or pick another tool to drop it"
+                        disabled>Paste</button>
+                </div>
+            </div>
+
+            <div id="viewport">
+                <canvas id="grid"></canvas>
+
+                <!-- Canvas overlays: these float over the drawing instead of
+                     each taking a permanent slice of the chrome. -->
+                <div id="cellInfo" class="cell-info"></div>
+                <div id="saveStatus" class="save-status"></div>
+
+                <!-- Only appears while there is something to act on, so five
+                     permanently-greyed buttons no longer sit in the toolbar. -->
+                <div id="selectionActions" class="selection-actions" role="toolbar" aria-label="Selection actions">
+                    <button id="copyBtn" class="tool-btn" title="Copy selection (Ctrl+C)" disabled>Copy</button>
+                    <button id="cutBtn" class="tool-btn" title="Cut selection (Ctrl+X)" disabled>Cut</button>
+                    <button id="rotateBtn" class="tool-btn" title="Rotate selection 90&deg; clockwise (R)"
+                        disabled>Rotate</button>
+                    <button id="mirrorBtn" class="tool-btn" title="Mirror selection left-right (M)"
+                        disabled>Mirror</button>
+                    <button id="saveComponentBtn" class="tool-btn"
+                        title="Save the current clipboard as a named, reusable component" disabled>Save&hellip;</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ---- Overflow menu ---- -->
+    <div id="menuBackdrop" class="modal-backdrop"></div>
+    <div id="menuPanel" class="menu-panel" role="menu" aria-label="More">
+        <button id="fitBtn" class="menu-item" role="menuitem">Fit to window<span class="menu-hint">F</span></button>
+        <button id="gridToggleBtn" class="menu-item" role="menuitem" aria-pressed="true"
+            title="Remembered separately for build vs. Interact">Grid lines<span class="menu-hint">G</span></button>
+        <div class="menu-sep"></div>
+        <button id="componentsBtn" class="menu-item" role="menuitem">Components&hellip;</button>
+        <div class="menu-sep"></div>
+        <button id="exportBtn" class="menu-item" role="menuitem">Export circuit<span class="menu-hint">to
+                clipboard</span></button>
+        <button id="importBtn" class="menu-item" role="menuitem">Import circuit<span class="menu-hint">from
+                text</span></button>
+        <div class="menu-sep"></div>
+        <button id="resetChargesBtn" class="menu-item" role="menuitem">Reset charges<span class="menu-hint">keep
+                layout</span></button>
+        <button id="clearBtn" class="menu-item danger" role="menuitem">Clear grid<span
+                class="menu-hint">Del</span></button>
+        <div class="menu-sep"></div>
+        <button id="fullscreenBtn" class="menu-item" role="menuitem" aria-pressed="false">Fullscreen</button>
+    </div>
+
+    <!-- ---- Components panel ---- -->
+    <div id="componentsBackdrop" class="modal-backdrop"></div>
+    <div id="componentsPanel" class="modal-panel" role="dialog" aria-label="Components">
+        <div class="modal-panel-header">
+            <span>Components</span>
+            <button id="componentsCloseBtn" class="icon-btn" title="Close">&times;</button>
+        </div>
+        <div id="componentsList" class="components-list"></div>
+        <div id="componentsEmpty" class="components-empty">No saved components yet. Select something, Copy it, then
+            Save&hellip;</div>
+    </div>
+
+    <script src="model.js"></script>
+    <script src="view.js"></script>
+    <script src="ui.js"></script>
+    <script src="pwa.js"></script>
+</body>
+
+</html>
