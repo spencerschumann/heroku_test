@@ -1,0 +1,526 @@
+:root {
+    --pcb-insulator: #0d3b0d;
+    --pcb-conductor: #3fae4a;
+    --pcb-gray: #2b2b2b;
+    --pcb-gold: #e6b800;
+    --panel-bg: #1a1a1a;
+    --panel-border: #333;
+    --btn-bg: #262626;
+    --btn-bg-hover: #333;
+    --accent: #7dffb3;
+    --text: #e8e8e8;
+    --text-dim: #9a9a9a;
+    /* Every control derives its size from these, so the whole UI rescales in
+       one place: --bar-h for the top bar, --hit for the minimum tap target. */
+    --bar-h: 46px;
+    --hit: 34px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    height: 100%;
+    background: #050505;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+    /* Native feel: no rubber-band/pull-to-refresh, no long-press text
+       selection, no blue tap flash on buttons. */
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+#app {
+    /* 100dvh tracks the *dynamic* viewport so the canvas isn't left under a
+       mobile browser's collapsing address bar; the static 100vh is the
+       fallback for engines without dvh. */
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+}
+
+/* ---- Shared button look ---- */
+
+.icon-btn, .tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--btn-bg);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0 10px;
+    min-height: var(--hit);
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.icon-btn { min-width: var(--hit); padding: 0 8px; font-size: 15px; }
+.icon-btn.wide-btn { font-size: 13px; }
+
+.icon-btn:hover, .tool-btn:hover { background: var(--btn-bg-hover); }
+
+.icon-btn:disabled, .tool-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+.icon-btn:disabled:hover, .tool-btn:disabled:hover { background: var(--btn-bg); }
+
+.icon-btn[aria-pressed="true"], .tool-btn.selected {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ---- Top bar ---- */
+
+#topbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: var(--bar-h);
+    padding: 6px 10px;
+    /* Keep the bar clear of the status bar / notch and side cutouts when
+       running as an installed app (display: standalone, viewport-fit: cover). */
+    padding-top: max(6px, env(safe-area-inset-top));
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--panel-border);
+}
+
+.bar-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    /* The bar stays a single row at every width. Groups hold their size and
+       never wrap; the speed slider is the one thing allowed to give, and
+       below 420px the whole zoom group steps aside (see that breakpoint) —
+       so the controls that go first are chosen rather than whichever
+       happened to be last. */
+    flex: 0 0 auto;
+}
+
+.bar-spacer { flex: 1 1 auto; min-width: 0; }
+
+.speed-group { flex: 0 1 auto; min-width: 0; }
+#intervalSlider {
+    width: 110px;
+    min-width: 48px;
+    flex: 0 1 auto;
+    accent-color: var(--pcb-conductor);
+}
+
+.tick-count {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    min-width: 3.5em;
+}
+
+.slider-value, .zoom-value {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    text-align: center;
+    min-width: 4.5em;
+    white-space: nowrap;
+}
+
+/* ---- Workspace: tool rail + canvas ---- */
+
+#workspace {
+    flex: 1 1 auto;
+    display: flex;
+    /* Narrow default: the tool strip sits *below* the canvas, within thumb
+       reach. `column-reverse` puts it there visually while leaving it first
+       in the DOM, and so first in tab order. */
+    flex-direction: column-reverse;
+    min-height: 0;
+    min-width: 0;
+}
+
+#toolrail {
+    flex: 0 0 auto;
+    display: flex;
+    background: var(--panel-bg);
+    border-top: 1px solid var(--panel-border);
+    padding: 5px max(6px, env(safe-area-inset-left)) max(5px, env(safe-area-inset-bottom));
+    gap: 6px;
+    /* More tools than ever fit a phone's width: scroll them in one row
+       rather than wrapping into rows that eat the canvas. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+#toolrail::-webkit-scrollbar { display: none; }
+
+.tool-group {
+    display: flex;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+/* Hairline between the materials and the pointer modes. */
+.tool-group + .tool-group {
+    border-left: 1px solid var(--panel-border);
+    padding-left: 6px;
+    margin-left: 2px;
+}
+
+.tool-btn[data-tool] {
+    /* Narrow: swatch stacked over a small label. The labels stay — a row of
+       unlabeled, near-identical grey chips was unreadable. */
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    min-width: 58px;
+    padding: 6px 4px;
+    font-size: 10px;
+}
+
+.swatch-tool::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    background: var(--swatch);
+    border: 1px solid #555;
+}
+
+.glyph-tool::before {
+    /* No material colour to show, so the shortcut key doubles as the icon. */
+    content: attr(data-glyph);
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid #555;
+    color: var(--text-dim);
+    font-size: 10px;
+    font-family: ui-monospace, monospace;
+}
+
+/* The shortcut hint only earns its space in the wide rail. */
+.tool-btn[data-key]::after { display: none; }
+
+/* ---- Wide screens: tools become a vertical rail beside the canvas ---- */
+/* Vertical costs width, which is the plentiful dimension here, and it keeps
+   the canvas's full height no matter how many tools there are — the old
+   wrapping toolbar spent up to four rows (~205px) on a 1024px-wide tablet. */
+@media (min-width: 700px) {
+    #workspace { flex-direction: row; }
+
+    #toolrail {
+        flex-direction: column;
+        width: 132px;
+        border-top: none;
+        border-right: 1px solid var(--panel-border);
+        padding: 6px;
+        padding-left: max(6px, env(safe-area-inset-left));
+        padding-bottom: max(6px, env(safe-area-inset-bottom));
+        overflow-x: hidden;
+        overflow-y: auto;
+        gap: 8px;
+    }
+
+    .tool-group { flex-direction: column; }
+    .tool-group + .tool-group {
+        border-left: none;
+        border-top: 1px solid var(--panel-border);
+        padding-left: 0;
+        padding-top: 8px;
+        margin-left: 0;
+    }
+
+    .tool-btn[data-tool] {
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
+        padding: 0 8px;
+        font-size: 12px;
+    }
+
+    .tool-btn[data-key]::after {
+        content: attr(data-key);
+        display: block;
+        margin-left: auto;
+        font-family: ui-monospace, monospace;
+        font-size: 10px;
+        color: #6d6d6d;
+    }
+}
+
+/* Short and wide — landscape phones. Thirteen full-width rows don't fit
+   350px of rail, so the rail goes two-up with the compact stacked chip:
+   every tool stays visible at once instead of hiding behind a scroll. */
+@media (min-width: 700px) and (max-height: 560px) {
+    :root { --bar-h: 40px; --hit: 30px; }
+
+    #toolrail { width: 134px; gap: 5px; padding: 4px; }
+    .tool-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+    }
+    .tool-group + .tool-group { padding-top: 5px; }
+
+    .tool-btn[data-tool] {
+        flex-direction: column;
+        justify-content: center;
+        gap: 3px;
+        min-width: 0;
+        padding: 4px 2px;
+        font-size: 9px;
+    }
+    .tool-btn[data-key]::after { display: none; }
+}
+
+/* Very narrow phones. Play, speed, undo/redo and the menu are what has to
+   survive, so the tick readout and the whole zoom cluster give up their
+   space — pinch-zoom is the natural gesture here anyway, and Fit lives in
+   the menu. The tool chips shrink so more than four are reachable without
+   scrolling. */
+@media (max-width: 420px) {
+    #topbar {
+        gap: 5px;
+        padding-left: max(6px, env(safe-area-inset-left));
+        padding-right: max(6px, env(safe-area-inset-right));
+    }
+    .tick-count, .zoom-group { display: none; }
+    .slider-value { min-width: 3.5em; }
+    #intervalSlider { width: 64px; }
+    .tool-btn[data-tool] { min-width: 50px; font-size: 9px; }
+}
+
+#viewport {
+    flex: 1 1 auto;
+    position: relative;
+    overflow: hidden;
+    min-height: 0;
+    min-width: 0;
+}
+
+#grid {
+    position: absolute;
+    top: 0;
+    left: 0;
+    cursor: crosshair;
+    /* The app owns every touch gesture on the canvas (draw, two-finger pan +
+       pinch-zoom), so tell the browser not to hijack any of them for its own
+       scroll/zoom. */
+    touch-action: none;
+}
+
+/* ---- Canvas overlays ---- */
+/* Each collapses to nothing when empty, so an idle canvas is unobstructed —
+   and unlike the old in-toolbar readouts, none of them can resize the
+   chrome and shift the canvas out from under a drag. */
+
+.cell-info {
+    position: absolute;
+    left: 8px;
+    /* Top-left, not the more usual bottom-left: the selection action bar
+       floats along the bottom edge, and on a narrow canvas it would sit
+       right on top of this readout. */
+    top: 8px;
+    padding: 3px 7px;
+    border-radius: 5px;
+    background: rgba(10, 10, 10, 0.72);
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    pointer-events: none;
+    white-space: nowrap;
+}
+.cell-info:empty { display: none; }
+
+.save-status {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    padding: 4px 9px;
+    border-radius: 5px;
+    background: rgba(10, 10, 10, 0.78);
+    border: 1px solid var(--panel-border);
+    font-size: 12px;
+    color: var(--accent);
+    pointer-events: none;
+    white-space: nowrap;
+}
+.save-status:empty { display: none; }
+
+.selection-actions {
+    display: none;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: max(10px, env(safe-area-inset-bottom));
+    max-width: calc(100% - 16px);
+    gap: 4px;
+    padding: 5px;
+    border-radius: 9px;
+    background: rgba(20, 20, 20, 0.94);
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+    overflow-x: auto;
+    scrollbar-width: none;
+    z-index: 5;
+}
+.selection-actions::-webkit-scrollbar { display: none; }
+.selection-actions.open { display: flex; }
+.selection-actions .tool-btn { flex: 0 0 auto; }
+
+/* ---- Overflow menu ---- */
+
+.menu-panel {
+    display: none;
+    position: fixed;
+    top: calc(var(--bar-h) + max(6px, env(safe-area-inset-top)));
+    right: max(8px, env(safe-area-inset-right));
+    min-width: 210px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - var(--bar-h) - 24px);
+    overflow-y: auto;
+    padding: 5px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 9px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+    z-index: 12;
+}
+.menu-panel.open { display: block; }
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: var(--hit);
+    padding: 0 10px;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.menu-item:hover { background: var(--btn-bg-hover); }
+.menu-item[aria-pressed="true"] { color: var(--accent); }
+.menu-item.danger:hover { background: #5a1f1f; }
+
+.menu-hint {
+    margin-left: auto;
+    font-size: 11px;
+    color: #6d6d6d;
+    font-family: ui-monospace, monospace;
+}
+
+.menu-sep {
+    height: 1px;
+    margin: 5px 8px;
+    background: var(--panel-border);
+}
+
+/* ---- PWA update toast ---- */
+.pwa-toast {
+    position: fixed;
+    left: 50%;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    font-size: 13px;
+    z-index: 20;
+}
+
+/* ---- Modal panels ---- */
+.modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 10;
+}
+.modal-backdrop.open { display: block; }
+/* The menu's backdrop exists only to catch outside taps — it must not dim
+   the app the way the components dialog's does. */
+#menuBackdrop { background: transparent; z-index: 11; }
+
+.modal-panel {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 320px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 12px;
+    z-index: 11;
+}
+.modal-panel.open { display: block; }
+
+.modal-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.components-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.component-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.component-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+.components-empty {
+    color: #888;
+    font-size: 13px;
+}
+
+.tool-btn.danger:hover {
+    background: #5a1f1f;
+    border-color: #a33;
+}
