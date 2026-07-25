@@ -34,13 +34,15 @@
     let running = false;
     // Exponential so the slider gives fine control at the slow end and still
     // reaches a genuinely fast rate at the top (was capped at 20 steps/s).
-    const MIN_TPS = 1, MAX_TPS = 200;
-    let tickIntervalMs = 1000 / MIN_TPS;
+    // The default is fast enough that a circuit visibly *runs* on first
+    // contact rather than creeping; the slider is there to slow it down when
+    // you want to watch a signal propagate.
+    const MIN_TPS = 1, MAX_TPS = 200, DEFAULT_TPS = 60;
+    let tickIntervalMs = 1000 / DEFAULT_TPS;
     let lastTick = 0;
     let panning = false;
     let lastPanPos = null;
 
-    const tickCountEl = document.getElementById('tickCount');
     const playPauseBtn = document.getElementById('playPauseBtn');
     const zoomValueEl = document.getElementById('zoomValue');
     const intervalSlider = document.getElementById('intervalSlider');
@@ -160,11 +162,21 @@
     const UNDO_LIMIT = 100;
     let undoBatchOpen = false;
 
-    // Each entry snapshots the circuit AND the pan, so undoing an edit that
-    // auto-grew the grid restores both the smaller grid and the matching pan —
-    // the drawing lands back exactly where it was.
+    // How many columns/rows the grid has grown off its left and top edges
+    // since the app started. Cell coordinates shift by this whenever
+    // expandForBorder() adds space, so it's what lets an undo tell "the grid
+    // moved under the drawing" apart from "the user panned".
+    const gridOrigin = { x: 0, y: 0 };
+
+    // Each entry snapshots the circuit and that origin — NOT the pan or zoom.
+    // Undo used to restore the pan outright, which meant any panning or
+    // zooming you did after an edit was thrown away the moment you undid it:
+    // the view jumped, which is jarring and never what undo was asked to do.
+    // Recording the origin instead is enough to keep the drawing visually
+    // still across an undo that shrinks the grid, while leaving the view
+    // exactly where you put it.
     function snapshotEntry() {
-        return { snap: M.getStructuralSnapshot(), panX: V.panX, panY: V.panY, zoom: V.zoom };
+        return { snap: M.getStructuralSnapshot(), originX: gridOrigin.x, originY: gridOrigin.y };
     }
     function beginUndoBatch() {
         if (undoBatchOpen) return;
@@ -178,9 +190,15 @@
 
     function restoreEntry(e) {
         M.restoreStructuralSnapshot(e.snap);
-        V.setZoom(e.zoom);
-        V.setPan(e.panX, e.panY);
-        updateZoomLabel();
+        // Restoring a differently-sized grid re-lays the cells at the
+        // snapshot's coordinates, so shift the pan by exactly the difference
+        // in origin — the drawing stays put on screen and the zoom, and any
+        // panning done since, are left alone.
+        const cs = M.CELL_SIZE * V.zoom;
+        const dx = (gridOrigin.x - e.originX) * cs, dy = (gridOrigin.y - e.originY) * cs;
+        if (dx || dy) V.pan(dx, dy);
+        gridOrigin.x = e.originX;
+        gridOrigin.y = e.originY;
     }
     function undo() {
         if (!undoStack.length) return;
@@ -633,7 +651,11 @@
     // {left, top, right, bottom} added.
     function applyExpansion() {
         const g = M.expandForBorder();
-        if (g.left || g.top) V.compensateExpansion(g.left, g.top);
+        if (g.left || g.top) {
+            V.compensateExpansion(g.left, g.top);
+            gridOrigin.x += g.left;
+            gridOrigin.y += g.top;
+        }
         return g;
     }
 
@@ -1014,7 +1036,6 @@
         playPauseBtn.addEventListener('click', () => setRunning(!running));
         document.getElementById('stepBtn').addEventListener('click', () => {
             M.stepSimulation();
-            tickCountEl.textContent = `t=${M.tickCount}`;
             V.drawGrid();
         });
         document.getElementById('clearBtn').addEventListener('click', () => {
@@ -1023,12 +1044,10 @@
             M.clearGrid();
             endUndoBatch();
             setSelection(null);
-            tickCountEl.textContent = `t=${M.tickCount}`;
             afterEdit();
         });
         document.getElementById('resetChargesBtn').addEventListener('click', () => {
             M.resetCharges();
-            tickCountEl.textContent = `t=${M.tickCount}`;
             V.drawGrid();
             scheduleSave();
         });
@@ -1047,6 +1066,7 @@
         componentsCloseBtn.addEventListener('click', closeComponents);
         componentsBackdrop.addEventListener('click', closeComponents);
 
+        intervalSlider.value = String(sliderPosForTps(DEFAULT_TPS));
         intervalSlider.addEventListener('input', updateIntervalFromSlider);
         updateIntervalFromSlider();
 
@@ -1078,7 +1098,10 @@
             const ok = M.deserialize(text);
             endUndoBatch();
             if (ok) {
-                tickCountEl.textContent = `t=${M.tickCount}`;
+                // An imported grid brings its own coordinate frame, and the
+                // view is refit to it, so the origin starts over from here.
+                gridOrigin.x = 0;
+                gridOrigin.y = 0;
                 V.fitToWindow(); updateZoomLabel();
                 afterEdit();
                 flashStatus('Imported');
@@ -1099,11 +1122,19 @@
         statusTimer = setTimeout(() => { statusEl.textContent = ''; }, 1500);
     }
 
+    // The slider's own max is the resolution: it's fine-grained (1000 steps)
+    // so that a whole-number target rate like DEFAULT_TPS lands on it exactly
+    // instead of a step either side of it.
     function updateIntervalFromSlider() {
         const v = Number(intervalSlider.value);
-        const tps = MIN_TPS * Math.pow(MAX_TPS / MIN_TPS, v / 100);
+        const tps = MIN_TPS * Math.pow(MAX_TPS / MIN_TPS, v / Number(intervalSlider.max));
         tickIntervalMs = 1000 / tps;
         intervalValueEl.textContent = `${Math.round(tps)} tps`;
+    }
+    // The scale is exponential, so the position for a given rate is derived
+    // rather than hard-coded — changing DEFAULT_TPS is enough.
+    function sliderPosForTps(tps) {
+        return Math.round(Number(intervalSlider.max) * Math.log(tps / MIN_TPS) / Math.log(MAX_TPS / MIN_TPS));
     }
 
     // A tick interval faster than one frame (~16ms at 60Hz) can't be reached by
@@ -1121,10 +1152,7 @@
                 steps++;
             }
             if (now - lastTick >= tickIntervalMs) lastTick = now; // drop any remaining backlog
-            if (steps > 0) {
-                tickCountEl.textContent = `t=${M.tickCount}`;
-                V.drawGrid();
-            }
+            if (steps > 0) V.drawGrid();
         } else {
             lastTick = now;
         }
@@ -1177,15 +1205,18 @@
 
         if (e.key === ' ') { e.preventDefault(); document.getElementById('stepBtn').click(); }
         else if (e.key === 'p' || e.key === 'P') setRunning(!running);
+        // Digits follow the rail's order top-to-bottom. Erase sits second,
+        // next to Conductor, because reaching for it is as constant as
+        // reaching for wire.
         else if (e.key === '1') setDrawMode('conductor');
-        else if (e.key === '2') setDrawMode('gold');
-        else if (e.key === '3') setDrawMode('gray');
-        else if (e.key === '4') setDrawMode('pos');
-        else if (e.key === '5') setDrawMode('neg');
-        else if (e.key === '6') setDrawMode('led');
-        else if (e.key === '7') setDrawMode('switch');
-        else if (e.key === '8') setDrawMode('insulator');
-        else if (e.key === 't' || e.key === 'T') setDrawMode('toggle');
+        else if (e.key === '2') setDrawMode('insulator');
+        else if (e.key === '3') setDrawMode('gold');
+        else if (e.key === '4') setDrawMode('gray');
+        else if (e.key === '5') setDrawMode('pos');
+        else if (e.key === '6') setDrawMode('neg');
+        else if (e.key === '7') setDrawMode('led');
+        else if (e.key === '8') setDrawMode('toggle');
+        else if (e.key === '9') setDrawMode('switch');
         else if (e.key === 'i' || e.key === 'I') setDrawMode('interact');
         else if (e.key === 's' || e.key === 'S') setDrawMode('select');
         else if (e.key === 'a' || e.key === 'A') setDrawMode('rearrange');
@@ -1208,7 +1239,6 @@
         updateZoomLabel();
         updateActionButtons();
         V.drawGrid();
-        tickCountEl.textContent = `t=${M.tickCount}`;
         requestAnimationFrame(tickLoop);
     }
 

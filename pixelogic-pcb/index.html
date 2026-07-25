@@ -28,13 +28,6 @@
             <div class="bar-group">
                 <button id="playPauseBtn" class="icon-btn" title="Play/Pause (P)" aria-pressed="false">&#x25B6;</button>
                 <button id="stepBtn" class="icon-btn" title="Step (Space)">&#x23ED;</button>
-                <span id="tickCount" class="tick-count">t=0</span>
-            </div>
-
-            <div class="bar-group speed-group">
-                <input id="intervalSlider" type="range" min="0" max="100" value="50" title="Simulation speed"
-                    aria-label="Simulation speed">
-                <span id="intervalValue" class="slider-value"></span>
             </div>
 
             <div class="bar-spacer"></div>
@@ -62,22 +55,22 @@
                 <div class="tool-group" aria-label="Materials">
                     <button class="tool-btn swatch-tool" data-tool="conductor" data-key="1"
                         title="Conductor (1) — right-drag always erases" style="--swatch:#3fae4a">Conductor</button>
-                    <button class="tool-btn swatch-tool" data-tool="gold" data-key="2" title="Mux control band (2)"
+                    <button class="tool-btn swatch-tool" data-tool="insulator" data-key="2"
+                        title="Erase / Insulator (2)" style="--swatch:#0d3b0d">Erase</button>
+                    <button class="tool-btn swatch-tool" data-tool="gold" data-key="3" title="Mux control band (3)"
                         style="--swatch:#e6b800">MUX Control</button>
-                    <button class="tool-btn swatch-tool" data-tool="gray" data-key="3" title="Mux body band (3)"
+                    <button class="tool-btn swatch-tool" data-tool="gray" data-key="4" title="Mux body band (4)"
                         style="--swatch:#2b2b2b">MUX Body</button>
-                    <button class="tool-btn swatch-tool" data-tool="pos" data-key="4" title="+V source (4)"
+                    <button class="tool-btn swatch-tool" data-tool="pos" data-key="5" title="+V source (5)"
                         style="--swatch:#ffffff">+V</button>
-                    <button class="tool-btn swatch-tool" data-tool="neg" data-key="5" title="&minus;V source (5)"
+                    <button class="tool-btn swatch-tool" data-tool="neg" data-key="6" title="&minus;V source (6)"
                         style="--swatch:#000000">&minus;V</button>
-                    <button class="tool-btn swatch-tool" data-tool="led" data-key="6" title="LED output (6)"
+                    <button class="tool-btn swatch-tool" data-tool="led" data-key="7" title="LED output (7)"
                         style="--swatch:#ff2a2a">LED</button>
-                    <button class="tool-btn swatch-tool" data-tool="switch" data-key="7"
-                        title="Momentary switch input (7)" style="--swatch:#9aa0a6">Switch</button>
-                    <button class="tool-btn swatch-tool" data-tool="toggle" data-key="T" title="Toggle switch input (T)"
+                    <button class="tool-btn swatch-tool" data-tool="toggle" data-key="8" title="Toggle switch input (8)"
                         style="--swatch:#565b60">Toggle</button>
-                    <button class="tool-btn swatch-tool" data-tool="insulator" data-key="8"
-                        title="Erase / Insulator (8)" style="--swatch:#0d3b0d">Erase</button>
+                    <button class="tool-btn swatch-tool" data-tool="switch" data-key="9"
+                        title="Momentary switch input (9)" style="--swatch:#9aa0a6">Switch</button>
                 </div>
 
                 <div class="tool-group" aria-label="Modes">
@@ -120,6 +113,12 @@
     <!-- ---- Overflow menu ---- -->
     <div id="menuBackdrop" class="modal-backdrop"></div>
     <div id="menuPanel" class="menu-panel" role="menu" aria-label="More">
+        <div class="menu-slider">
+            <label for="intervalSlider">Speed</label>
+            <input id="intervalSlider" type="range" min="0" max="1000" value="773" aria-label="Simulation speed">
+            <span id="intervalValue" class="menu-hint"></span>
+        </div>
+        <div class="menu-sep"></div>
         <button id="fitBtn" class="menu-item" role="menuitem">Fit to window<span class="menu-hint">F</span></button>
         <button id="gridToggleBtn" class="menu-item" role="menuitem" aria-pressed="true"
             title="Remembered separately for build vs. Interact">Grid lines<span class="menu-hint">G</span></button>
