@@ -558,6 +558,17 @@ html, body {
     align-items: flex-start;
     gap: 10px;
 }
+.collapse-btn {
+    flex: 0 0 auto;
+    min-width: 26px;
+    padding: 0 4px;
+    font-size: 12px;
+}
+/* Collapsed keeps the title row — which says which level you are in and holds
+   Verify — and drops everything that was only worth reading once. */
+.level-bar.collapsed .level-brief,
+.level-bar.collapsed .level-detail,
+.level-bar.collapsed .level-result { display: none; }
 .level-bar-text { flex: 1 1 auto; min-width: 0; }
 .level-title { font-weight: 600; display: block; }
 .level-brief { color: var(--text-dim); display: block; margin-top: 2px; }
@@ -673,3 +684,46 @@ html, body {
     bottom: auto;
     top: max(8px, env(safe-area-inset-top));
 }
+
+
+/* The numbered walk-through on the first couple of levels. Indented under the
+   brief and styled quietly: it is scaffolding, not the level. */
+.level-steps {
+    margin: 8px 0 0;
+    padding-left: 22px;
+    color: var(--text-dim);
+    display: none;
+}
+.level-steps:not(:empty) { display: block; }
+.level-steps li { margin-bottom: 4px; }
+.level-steps b { color: var(--text); font-weight: 600; }
+
+/* ---- Truth table ----
+   Every row of the run, listed up front from the headless verdict, then marked
+   off as the animated replay reaches it. Scrolls inside itself so a fifty-row
+   table cannot push the level bar over the whole board. */
+.result-table.truth {
+    display: block;
+    max-height: 34vh;
+    overflow-y: auto;
+    margin-top: 8px;
+    border-collapse: collapse;
+}
+.result-table.truth th { position: sticky; top: 0; background: #141414; }
+.result-table.truth td, .result-table.truth th { padding: 1px 7px 1px 0; }
+.result-table.truth td.idx, .result-table.truth th.idx {
+    color: var(--text-dim);
+    text-align: right;
+    padding-right: 10px;
+}
+.result-table.truth td.sep, .result-table.truth th.sep { color: var(--text-dim); padding-right: 10px; }
+.result-table.truth td.mark { width: 1.4em; }
+
+/* The three states a row moves through. `active` is the one the board is
+   showing right now, so it is the only one that gets a background. */
+.result-table.truth tr.active { background: rgba(125, 255, 179, 0.12); }
+.result-table.truth tr.ok td.mark { color: var(--accent); }
+.result-table.truth tr.bad { background: rgba(255, 138, 138, 0.14); }
+.result-table.truth tr.bad td.mark { color: #ff8a8a; }
+/* Rows not yet reached stay dim, so the eye lands on the live one. */
+.level-result.running .result-table.truth tr:not(.active):not(.ok):not(.bad) td { opacity: 0.45; }

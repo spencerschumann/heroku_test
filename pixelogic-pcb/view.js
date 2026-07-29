@@ -904,35 +904,52 @@
         ctx.setLineDash([]);
     }
 
-    // Keep the grid from being panned entirely off-screen: at least half of
-    // whichever is smaller (the grid or the viewport) must stay visible on
-    // each axis. That floor still lets any edge cell be brought to the
-    // viewport center, but never into the void beyond it.
+    // The board is the whole world, so the view never strays far from it: at
+    // most ONE cell of empty space is allowed beyond any edge. Panning past
+    // that is not a feature — there is nothing out there, and being able to
+    // fling the board half off-screen only ever loses it. When an axis has
+    // room to spare the board is centred on it outright, so a small board
+    // sits in the middle instead of drifting into a corner.
+    const MARGIN_CELLS = 1;
+
+    // Height at the foot of the canvas covered by an overlay drawn on top of
+    // it (the campaign's level bar). Fitting and clamping both work against
+    // the part that is actually visible, so a board is never tucked behind it.
+    var insetBottom = 0;
+    const usableHeight = () => Math.max(80, canvas.height - insetBottom);
+
     function clampPan() {
-        const gw = M.GRID_W * cellSize(), gh = M.GRID_H * cellSize();
-        const marginX = Math.min(gw, canvas.width) / 2;
-        const marginY = Math.min(gh, canvas.height) / 2;
-        panX = Math.max(marginX - gw, Math.min(canvas.width - marginX, panX));
-        panY = Math.max(marginY - gh, Math.min(canvas.height - marginY, panY));
+        const cs = cellSize(), m = cs * MARGIN_CELLS;
+        const gw = M.GRID_W * cs, gh = M.GRID_H * cs;
+        const vw = canvas.width, vh = usableHeight();
+        panX = gw + 2 * m <= vw ? (vw - gw) / 2 : Math.max(vw - gw - m, Math.min(m, panX));
+        panY = gh + 2 * m <= vh ? (vh - gh) / 2 : Math.max(vh - gh - m, Math.min(m, panY));
     }
 
-    // `insetBottom` reserves height at the foot of the canvas for an overlay
-    // that sits on top of it (the campaign's level bar), so fitting a board
-    // puts the whole board in the part still actually visible rather than
-    // tucking its bottom rows behind the bar.
-    function fitToWindow(insetBottom) {
+    // The zoom at which the board plus its one-cell margin exactly fills the
+    // viewport — and therefore the furthest out anyone can go. Zooming past
+    // "the whole board, framed" would only add black.
+    function minZoom() {
+        const cs = Math.min(canvas.width / (M.GRID_W + 2 * MARGIN_CELLS),
+            usableHeight() / (M.GRID_H + 2 * MARGIN_CELLS));
+        return Math.max(0.05, cs / M.CELL_SIZE);
+    }
+
+    function fitToWindow() {
         resizeCanvas();
-        const usable = Math.max(80, canvas.height - (insetBottom || 0));
-        const cs = Math.min(canvas.width / M.GRID_W, usable / M.GRID_H);
-        zoom = Math.max(0.25, cs / M.CELL_SIZE);
-        panX = (canvas.width - M.GRID_W * cellSize()) / 2;
-        panY = (usable - M.GRID_H * cellSize()) / 2;
+        zoom = Math.min(4, minZoom());
+        clampPan();
     }
 
     window.PixelogicView = {
         canvas, drawGrid, resizeCanvas, screenToCell, fitToWindow,
         get zoom() { return zoom; },
-        setZoom(z) { zoom = Math.max(0.25, Math.min(4, z)); clampPan(); },
+        setZoom(z) { zoom = Math.max(minZoom(), Math.min(4, z)); clampPan(); },
+        get minZoom() { return minZoom(); },
+        // Re-apply both limits — after a resize, a board swap, or the level
+        // bar changing height, the current zoom/pan may no longer be legal.
+        clampView() { resizeCanvas(); if (zoom < minZoom()) zoom = Math.min(4, minZoom()); clampPan(); },
+        setViewInset(bottom) { insetBottom = bottom || 0; },
         pan(dx, dy) { panX += dx; panY += dy; clampPan(); },
         get panX() { return panX; }, get panY() { return panY; },
         // Set an exact pan without clamping — used to restore a saved pan on

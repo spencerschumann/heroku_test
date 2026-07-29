@@ -88,9 +88,16 @@
     const levelBriefEl = document.getElementById('levelBrief');
     const levelHintEl = document.getElementById('levelHint');
     const levelResultEl = document.getElementById('levelResult');
+    const levelStepsEl = document.getElementById('levelSteps');
     const hintBtn = document.getElementById('hintBtn');
     const verifyBtn = document.getElementById('verifyBtn');
     const levelsBtn = document.getElementById('levelsBtn');
+    const levelCollapseBtn = document.getElementById('levelCollapseBtn');
+    const sandboxToggleBtn = document.getElementById('sandboxToggleBtn');
+
+    const LEVEL_BAR_KEY = 'pixelogic-pcb.levelBar.v1';
+    let levelBarCollapsed = false;
+    try { levelBarCollapsed = JSON.parse(localStorage.getItem(LEVEL_BAR_KEY) || 'false') === true; } catch (e) { }
 
     // Grid-line visibility remembers separate on/off preferences for build
     // tools vs. Interact (the anticipated default: on while drawing, off
@@ -135,10 +142,19 @@
     // Applies (and reflects in the toggle button) whichever preference
     // matches the given tool mode - called on every tool switch so entering
     // Interact / leaving it always shows the right grid state.
+    //
+    // A campaign level overrides all of it and keeps the grid on. The boards
+    // there are small, deliberately tight, and read as graph paper you are
+    // solving a puzzle on; every cell counts, and counting them is easier with
+    // the lines drawn. The toggle is disabled rather than silently ignored.
     function applyGridVisibleForMode(mode) {
-        const visible = mode === 'interact' ? gridVisibleInteract : gridVisibleBuild;
+        const visible = gameLevel ? true : (mode === 'interact' ? gridVisibleInteract : gridVisibleBuild);
         V.setGridVisible(visible);
         gridToggleBtn.setAttribute('aria-pressed', String(visible));
+        gridToggleBtn.disabled = !!gameLevel;
+        gridToggleBtn.title = gameLevel
+            ? 'Always on while you are solving a level'
+            : 'Remembered separately for build vs. Interact';
     }
 
     // ---- Autosave (debounced) ----
@@ -657,9 +673,13 @@
         } else {
             V.setSelection(mode === 'select' ? selection : null);
         }
-        // Build modes pause the simulation; Interact resumes it, so flipping
-        // to Interact always shows the circuit actually running.
-        setRunning(mode === 'interact');
+        // In the sandbox, build modes pause the simulation and Interact
+        // resumes it. In a level the simulation just runs, whatever tool is
+        // held: you want to see charge move into the piece you have only half
+        // finished, and having a tool change quietly stop the board was the
+        // single most confusing thing about building in one. Play/pause still
+        // works by hand, for when you want to freeze a state and look at it.
+        if (!gameLevel) setRunning(mode === 'interact');
         applyGridVisibleForMode(mode);
         // Rotate's target and the floating action bar both depend on the
         // mode, not just on the selection, so they have to be re-evaluated
@@ -720,6 +740,23 @@
         function beginStroke(sx, sy, erase, opts) {
             const c = V.screenToCell(sx, sy);
             const o = opts || {};
+            // Touching the board ends any verification replay: it is driving
+            // the inputs, and two things fighting over them helps nobody.
+            abortReplay();
+            // A level's I/O pads are locked, so no tool can paint them —
+            // which frees the press to mean the only thing left that it could
+            // usefully mean. Flipping an input to watch what the circuit does
+            // is half of building one, and reaching for the Interact tool
+            // every time to do it was pure ceremony.
+            if (gameLevel && !erase && M.isLocked(c.x, c.y) && drawMode !== 'interact') {
+                if (M.setSwitch(c.x, c.y, true)) {
+                    pressedSwitch = { x: c.x, y: c.y };
+                    interactPending = { x: c.x, y: c.y, sx, sy, panning: false, wasSwitch: true };
+                    V.drawGrid();
+                    return;
+                }
+                if (M.toggleAt(c.x, c.y)) { V.drawGrid(); return; }
+            }
             if (drawMode === 'interact') {
                 // Not an edit, so no undo batch. A momentary switch presses and
                 // holds (released on pointer-up); a toggle flips and stays.
@@ -1265,7 +1302,8 @@
         else if (e.key === 'r' || e.key === 'R') doRotate();
         else if (e.key === 'm' || e.key === 'M') doMirror();
         else if (e.key === 'f' || e.key === 'F') { V.fitToWindow(); updateZoomLabel(); scheduleViewSave(); V.drawGrid(); }
-        else if (e.key === 'g' || e.key === 'G') gridToggleBtn.click();
+        else if (e.key === 'g' || e.key === 'G') { if (!gridToggleBtn.disabled) gridToggleBtn.click(); }
+        else if ((e.key === 'h' || e.key === 'H') && gameLevel) setCollapsed(!levelBarCollapsed);
     });
 
     // ---- Campaign ----------------------------------------------------------
@@ -1286,9 +1324,32 @@
         updateActionButtons();
     }
 
+    // The level bar floats over the canvas, so the view has to know how much
+    // of the foot it hides. Called whenever the bar appears, collapses, or
+    // grows a result table under it.
+    function syncViewInset() {
+        V.setViewInset(gameLevel && levelBar.classList.contains('open')
+            ? levelBar.offsetHeight + 16 : 0);
+    }
+
+    // The level bar's height moves around — collapsing, opening a hint, a
+    // result table appearing under it — and each move changes how much of the
+    // canvas is actually visible. Re-frame afterwards, but only for a view
+    // that was already framed: if the player has zoomed in on some corner,
+    // yanking them back out to the whole board every time the bar twitches is
+    // worse than a bit of the board sitting behind it.
+    function reframeAfter(change) {
+        const wasFramed = Math.abs(V.zoom - V.minZoom) < 1e-6;
+        change();
+        syncViewInset();
+        if (wasFramed) V.fitToWindow(); else V.clampView();
+        updateZoomLabel();
+        V.drawGrid();
+    }
+
     function showBoard() {
-        V.resizeCanvas();
-        V.fitToWindow(gameLevel ? levelBar.offsetHeight + 16 : 0);
+        syncViewInset();
+        V.fitToWindow();
         updateZoomLabel();
         scheduleViewSave();
         V.drawGrid();
@@ -1297,11 +1358,13 @@
     function enterLevel(id) {
         const level = G.getLevel(id);
         if (!level || !G.isUnlocked(id, gameProgress)) return;
+        abortReplay();
         flushSave();
         gameLevel = level;
         G.loadBoard(level, G.loadCircuit(id));
         V.setLabels(G.padLabels(level));
         gameProgress.current = id;
+        gameProgress.mode = 'campaign';
         G.saveProgress(gameProgress);
         resetHistory();
         setLevelResult(null);
@@ -1314,11 +1377,14 @@
     }
 
     function exitToSandbox() {
+        abortReplay();
         flushSave();
         gameLevel = null;
         M.setLockedCells([]);
         V.setLabels([]);
-        gameProgress.current = null;
+        // `current` is kept, not cleared: it is where the Sandbox toggle
+        // brings you back to.
+        gameProgress.mode = 'sandbox';
         G.saveProgress(gameProgress);
         const saved = localStorage.getItem(CIRCUIT_KEY);
         if (saved) M.deserialize(saved); else M.clearGrid();
@@ -1332,17 +1398,41 @@
     function updateLevelBar() {
         levelBar.classList.toggle('open', !!gameLevel);
         document.getElementById('app').classList.toggle('in-level', !!gameLevel);
-        if (!gameLevel) return;
+        if (!gameLevel) { syncViewInset(); return; }
         levelTitleEl.textContent = gameLevel.subtitle
             ? `${gameLevel.title} — ${gameLevel.subtitle}` : gameLevel.title;
         levelBriefEl.textContent = gameLevel.brief;
+        levelStepsEl.innerHTML = (gameLevel.steps || [])
+            .map((s) => `<li>${s}</li>`).join('');
         levelHintEl.textContent = gameLevel.hint || '';
         hintBtn.style.display = gameLevel.hint ? '' : 'none';
+        applyCollapsed();
+    }
+
+    // Collapsing leaves the title row and the buttons and hides the rest. The
+    // brief is worth reading once and then in the way — the board underneath is
+    // the thing — so the preference sticks across levels and reloads.
+    function applyCollapsed() {
+        levelBar.classList.toggle('collapsed', levelBarCollapsed);
+        levelCollapseBtn.setAttribute('aria-expanded', String(!levelBarCollapsed));
+        levelCollapseBtn.innerHTML = levelBarCollapsed ? '&#x25B4;' : '&#x25BE;';
+        levelCollapseBtn.title = levelBarCollapsed ? 'Show the level text (H)' : 'Minimize the level text (H)';
+        syncViewInset();
+    }
+
+    function setCollapsed(v) {
+        reframeAfter(() => {
+            levelBarCollapsed = v;
+            try { localStorage.setItem(LEVEL_BAR_KEY, JSON.stringify(v)); } catch (e) { }
+            applyCollapsed();
+        });
     }
 
     function setHintOpen(open) {
-        levelHintEl.classList.toggle('open', open);
-        hintBtn.setAttribute('aria-pressed', String(open));
+        reframeAfter(() => {
+            levelHintEl.classList.toggle('open', open);
+            hintBtn.setAttribute('aria-pressed', String(open));
+        });
     }
 
     // ---- Verification ----
@@ -1393,20 +1483,106 @@
         return true;
     }
 
+    // ---- Verify: the verdict, then the demonstration ------------------------
+    //
+    // Two passes, and the split is the point. `G.verify` decides in a few
+    // milliseconds; announcing that and stopping is what made this
+    // anticlimactic — you build a circuit and a word appears. So the verdict
+    // and the full table come first (instant, and correct even if the run is
+    // interrupted), and then the SAME vectors are driven through the board
+    // again slowly, letting charge actually travel, with the table filling in
+    // row by row underneath.
+    //
+    // A failing run stops at the offending row and leaves the board standing
+    // in that state, inputs and all. That is the most useful thing it can do:
+    // the circuit is sitting there getting the wrong answer, and you can look
+    // at where the charge went.
+    let replayTimer = null;
+
+    function abortReplay() {
+        if (!replayTimer) return;
+        cancelAnimationFrame(replayTimer);
+        replayTimer = null;
+        levelResultEl.classList.remove('running');
+    }
+
+    // The truth table, all rows up front: inputs, what is wanted, and a slot
+    // for what the board actually does, filled as the replay reaches each row.
+    function tableHtml(level, cases) {
+        const head = level.inputs.map((n) => `<th>${n}</th>`).join('')
+            + '<th class="sep">→</th>'
+            + level.outputs.map((n) => `<th>${n}</th>`).join('')
+            + '<th></th>';
+        const rows = cases.map((c, i) => {
+            const ins = level.inputs.map((n) => `<td class="bits">${c.inputs[n] & 1}</td>`).join('');
+            const outs = level.outputs.map((n) => `<td class="bits">${c.expected[n] & 1}</td>`).join('');
+            return `<tr data-row="${i}"><td class="idx">${level.sequential ? i + 1 : ''}</td>`
+                + `${ins}<td class="sep"></td>${outs}<td class="mark"></td></tr>`;
+        }).join('');
+        return `<table class="result-table truth"><tr><th class="idx"></th>${head}</tr>${rows}</table>`;
+    }
+
+    function markRow(i, state) {
+        const tr = levelResultEl.querySelector(`tr[data-row="${i}"]`);
+        if (!tr) return;
+        tr.className = state;                       // 'active' | 'ok' | 'bad'
+        const mark = tr.querySelector('.mark');
+        if (mark) mark.textContent = state === 'ok' ? '✓' : state === 'bad' ? '✗' : '';
+        if (state === 'active') tr.scrollIntoView({ block: 'nearest' });
+    }
+
+    // How many simulation ticks to run per animation frame. Small vector sets
+    // get the slow, watchable version; a fifty-row table would take a minute
+    // at that rate, so bigger ones speed up rather than being cut short.
+    const replayRate = (n) => (n <= 8 ? 1 : n <= 20 ? 3 : 8);
+
+    function startReplay(level, result, onDone) {
+        const r = G.replay(level);
+        const rate = replayRate(result.cases.length);
+        const holdFrames = result.cases.length <= 20 ? 10 : 3;
+        let hold = 0, started = false;
+        r.start();
+        levelResultEl.classList.add('running');
+
+        const frame = () => {
+            replayTimer = requestAnimationFrame(frame);
+            if (hold > 0) { hold--; return; }
+            if (!started || hold === 0) {
+                if (!started) { started = true; r.begin(0); markRow(0, 'active'); }
+            }
+            let settled = false;
+            for (let i = 0; i < rate && !settled; i++) settled = r.tick();
+            V.drawGrid();
+            if (!settled) return;
+
+            const c = result.cases[r.index];
+            markRow(r.index, c && c.ok ? 'ok' : 'bad');
+            // Stop where it went wrong, board and all — see above.
+            if (c && !c.ok) { abortReplay(); onDone(false); return; }
+            if (r.index + 1 >= result.cases.length) { abortReplay(); onDone(true); return; }
+            r.begin(r.index + 1);
+            markRow(r.index, 'active');
+            hold = holdFrames;
+        };
+        replayTimer = requestAnimationFrame(frame);
+    }
+
     function doVerify() {
         if (!gameLevel) return;
+        abortReplay();
         const level = gameLevel;
-        setLevelResult('<div class="result-note">Running…</div>');
-        // Yield a frame first: verify() runs the whole vector set synchronously,
-        // so without this the "Running…" line never paints on a slow board.
-        requestAnimationFrame(() => {
-            const result = G.verify(level);
-            V.drawGrid();
-            if (!result.passed) {
-                setLevelResult(failureHtml(level, result.failure, level.script ? level.script.length : result.cases.length));
-                return;
-            }
+        const total = level.script ? level.script.length : undefined;
 
+        // The verdict, off-screen and instant. The board is restored exactly,
+        // so the replay below starts from the circuit as the player left it.
+        const result = G.verify(level);
+        const header = result.passed
+            ? ''
+            : failureHtml(level, result.failure, total || result.cases.length);
+        reframeAfter(() => setLevelResult(header + tableHtml(level, result.cases)));
+
+        startReplay(level, result, (passed) => {
+            if (!passed) return;    // the failure header is already showing
             const firstTime = !gameProgress.completed[level.id];
             gameProgress.completed[level.id] = true;
             G.saveProgress(gameProgress);
@@ -1416,10 +1592,14 @@
                 ? `Held through all ${result.cases.length} steps.`
                 : `Passed all ${result.cases.length} test cases.`];
             if (shelved) notes.push(`Saved as the component “${level.title}”.`);
-            setLevelResult(`<div class="result-line result-pass">Solved${firstTime ? '' : ' (again)'}.</div>`
-                + `<div class="result-note">${notes.join(' ')}</div>`
-                + (next ? `<div class="result-note"><button class="tool-btn primary" id="nextLevelBtn">Next: ${next.title}</button></div>`
-                    : '<div class="result-note">That is the last level built so far — see the Campaign panel for what comes next.</div>'));
+            reframeAfter(() => {
+                setLevelResult(`<div class="result-line result-pass">Solved${firstTime ? '' : ' (again)'}.</div>`
+                    + `<div class="result-note">${notes.join(' ')}</div>`
+                    + (next ? `<div class="result-note"><button class="tool-btn primary" id="nextLevelBtn">Next: ${next.title}</button></div>`
+                        : '<div class="result-note">That is the last level built so far — see the Campaign panel for what comes next.</div>')
+                    + tableHtml(level, result.cases));
+                for (let i = 0; i < result.cases.length; i++) markRow(i, 'ok');
+            });
             const nextBtn = document.getElementById('nextLevelBtn');
             if (nextBtn) nextBtn.addEventListener('click', () => enterLevel(next.id));
         });
@@ -1489,13 +1669,25 @@
         levelsBackdrop.classList.remove('open');
     }
 
+    // The campaign is the app; the sandbox is the side door. This flips
+    // between them and remembers which one you were in.
+    function toggleSandbox() {
+        setMenuOpen(false);
+        if (gameLevel) { exitToSandbox(); return; }
+        const resume = gameProgress.current && G.getLevel(gameProgress.current);
+        if (resume && G.isUnlocked(resume.id, gameProgress)) enterLevel(resume.id);
+        else openLevels();
+    }
+
     function setupCampaign() {
         campaignBtn.addEventListener('click', () => { setMenuOpen(false); openLevels(); });
         levelsCloseBtn.addEventListener('click', closeLevels);
         levelsBackdrop.addEventListener('click', closeLevels);
         levelsBtn.addEventListener('click', openLevels);
         sandboxBtn.addEventListener('click', exitToSandbox);
+        sandboxToggleBtn.addEventListener('click', toggleSandbox);
         verifyBtn.addEventListener('click', doVerify);
+        levelCollapseBtn.addEventListener('click', () => setCollapsed(!levelBarCollapsed));
         hintBtn.addEventListener('click', () => setHintOpen(!levelHintEl.classList.contains('open')));
         resetProgressBtn.addEventListener('click', () => {
             if (!window.confirm('Forget which levels are solved, and discard every level circuit? '
@@ -1507,30 +1699,41 @@
         });
     }
 
-    window.addEventListener('resize', () => { V.resizeCanvas(); V.drawGrid(); });
+    window.addEventListener('resize', () => {
+        syncViewInset();
+        V.clampView();          // the old zoom/pan may no longer be legal
+        updateZoomLabel();
+        V.drawGrid();
+    });
 
     function init() {
         setupToolbar();
         setupCanvasEvents();
         setupCampaign();
-        // A level in progress is where the app was left, so that is where it
-        // comes back — the sandbox circuit stays in its own slot meanwhile.
-        const resume = gameProgress.current && G.getLevel(gameProgress.current);
+        // The campaign is the app's front door. A first-time visitor lands in
+        // the tutorial level rather than on an empty board with a rail of
+        // tools and no indication of what any of it is for; a returning one
+        // lands wherever they left off, sandbox included.
+        const resume = gameProgress.mode === 'sandbox' ? null
+            : G.getLevel(gameProgress.current) || G.LEVELS[0];
         if (resume && G.isUnlocked(resume.id, gameProgress)) {
             gameLevel = resume;
+            gameProgress.current = resume.id;
             G.loadBoard(resume, G.loadCircuit(resume.id));
             V.setLabels(G.padLabels(resume));
             updateLevelBar();
+            setRunning(true);
         } else {
-            gameProgress.current = null;
             const saved = localStorage.getItem(CIRCUIT_KEY);
             if (saved) M.deserialize(saved);
         }
+        applyGridVisibleForMode(drawMode);
         V.resizeCanvas();
         // A restored viewport belongs to whichever board was on screen; after
         // resuming into a level, fit that level's board instead.
-        if (gameLevel) V.fitToWindow(levelBar.offsetHeight + 16);
-        else if (!loadView()) V.fitToWindow();
+        syncViewInset();
+        if (gameLevel || !loadView()) V.fitToWindow();
+        else V.clampView();     // a saved sandbox view predates these limits
         updateZoomLabel();
         updateActionButtons();
         V.drawGrid();

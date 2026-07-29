@@ -73,44 +73,92 @@
 
     // ===== Levels =====
     //
-    // Each level: {id, chapter, title, subtitle, brief, hint, inputs, outputs,
-    // truth, w, minH, settle}. `truth` maps an object of input bits to an
+    // Each level: {id, chapter, title, subtitle, brief, steps, hint, inputs,
+    // outputs, truth, w, h, settle}. `truth` maps an object of input bits to an
     // object of output bits; every declared output must be assigned.
     //
     // A storage level instead sets `sequential: true` and carries `script`
     // (ordered input vectors) and `step(inputs, prev)`, where `prev` is the
     // outputs after the previous step. The two forms are exclusive.
+    //
+    // `w`/`h` are the board, and they are deliberately TIGHT. Room to sprawl is
+    // not neutral: it turns "find the arrangement that fits" — most of the
+    // actual puzzle, and the thing a real board makes you care about — into
+    // "drop the parts anywhere and join the dots". Each board here is sized so
+    // a known solution fits with a little slack and not much more; the
+    // reference solutions in tests/game.test.js are what keeps that honest, and
+    // they fail loudly if a board is shrunk past what can be built in it.
+    //
+    // `steps` is a short numbered walk-through, shown in the level bar. Only the
+    // first few levels have one — it is scaffolding for someone who has never
+    // seen this world, not a solution key.
     const LEVELS = [
         {
-            id: 'not', chapter: 'logic', title: 'Inverter', subtitle: 'NOT',
-            brief: 'Light the lamp when the switch is OFF, and only then.',
-            hint: 'One mux does it. Its control is the input; wire +V to the pin '
-                + 'behind the UNwired control corner and −V to the pin behind the '
-                + 'wired one, then take COM to the output.',
-            inputs: ['A'], outputs: ['Q'], w: 30,
+            id: 'first-light', chapter: 'basics', title: 'First light', subtitle: 'a wire',
+            brief: 'Light the lamp when the switch is ON. One wire is all this takes — '
+                + 'the point is to meet the tools.',
+            steps: [
+                'Pick <b>Conductor</b> in the tool rail (or press <b>1</b>).',
+                'Drag from the cell just right of the <b>A</b> switch across to the '
+                + '<b>Q</b> lamp. Wire is drawn cell by cell, and two touching cells '
+                + 'are connected — there is nothing else to join up.',
+                'Click the <b>A</b> switch. It latches on, and you should see charge '
+                + 'run along the wire and light the lamp. The circuit is live the '
+                + 'whole time you are building.',
+                'Made a mess? <b>Right-drag</b> always erases, and the switch and lamp '
+                + 'are fixed — nothing you draw can damage them.',
+                'Press <b>Verify</b> to have the level test the circuit for you.',
+            ],
+            hint: 'A straight run of conductor from the switch to the lamp. If nothing '
+                + 'lights, look for a one-cell gap: cells connect only edge to edge, '
+                + 'never diagonally.',
+            inputs: ['A'], outputs: ['Q'], w: 16, h: 9,
+            truth: (v) => ({ Q: v.A }),
+        },
+        {
+            id: 'not', chapter: 'basics', title: 'Inverter', subtitle: 'NOT',
+            brief: 'Light the lamp when the switch is OFF, and only then. This one needs '
+                + 'the part everything else is built from: a mux.',
+            steps: [
+                'Draw a <b>MUX Control</b> (<b>3</b>) bar exactly 3 cells long.',
+                'Tap <b>MUX Body</b> (<b>4</b>) once against the side of it — the '
+                + 'whole 3-cell body row fills in, and you have a mux.',
+                'The body\'s middle cell is <b>COM</b>, the output. The two end cells '
+                + 'are the pins it switches between. Only the two <b>corners</b> of '
+                + 'the gold bar take a wire; whichever corner you wire is the one '
+                + 'selected when the control is ON.',
+                'Paint <b>−V</b> (<b>6</b>) on the pin behind the corner you wired, '
+                + 'and <b>+V</b> (<b>5</b>) on the other. Now control ON pulls COM '
+                + 'down and control OFF drives it high.',
+                'Wire <b>A</b> to that corner and <b>COM</b> to <b>Q</b>.',
+            ],
+            hint: 'One mux does it. Its control is the input; −V goes on the pin behind '
+                + 'the corner you wired and +V behind the other, then COM goes to the '
+                + 'output.',
+            inputs: ['A'], outputs: ['Q'], w: 20, h: 13,
             truth: (v) => ({ Q: v.A ? 0 : 1 }),
         },
         {
-            id: 'and', chapter: 'logic', title: 'And', subtitle: 'A · B',
+            id: 'and', chapter: 'basics', title: 'And', subtitle: 'A · B',
             brief: 'Light the lamp only when both switches are ON.',
             hint: 'A mux is a switch: let A choose between B and −V. When A is off '
                 + 'the output is pulled down; when A is on it follows B.',
-            inputs: ['A', 'B'], outputs: ['Q'], w: 40,
+            inputs: ['A', 'B'], outputs: ['Q'], w: 24, h: 15,
             truth: (v) => ({ Q: v.A & v.B }),
         },
         {
-            id: 'or', chapter: 'logic', title: 'Or', subtitle: 'A + B',
+            id: 'or', chapter: 'basics', title: 'Or', subtitle: 'A + B',
             brief: 'Light the lamp when either switch is ON.',
             hint: 'The mirror of And: let A choose between +V and B.',
-            inputs: ['A', 'B'], outputs: ['Q'], w: 40,
+            inputs: ['A', 'B'], outputs: ['Q'], w: 24, h: 15,
             truth: (v) => ({ Q: v.A | v.B }),
         },
         {
-            id: 'xor', chapter: 'logic', title: 'Exclusive or', subtitle: 'A ⊕ B',
+            id: 'xor', chapter: 'basics', title: 'Exclusive or', subtitle: 'A ⊕ B',
             brief: 'Light the lamp when the switches disagree.',
             hint: 'A chooses between B and NOT B — so you need the inverter you '
                 + 'already built, plus one more mux to select with.',
-            inputs: ['A', 'B'], outputs: ['Q'], w: 44, minH: 30,
+            inputs: ['A', 'B'], outputs: ['Q'], w: 30, h: 20,
             truth: (v) => ({ Q: v.A ^ v.B }),
         },
 
@@ -119,7 +167,7 @@
             brief: 'Add two bits. S is the sum bit, C the carry out.',
             hint: 'S is A ⊕ B and C is A · B — both already on your shelf. '
                 + 'Open Components and paste them in.',
-            inputs: ['A', 'B'], outputs: ['S', 'C'], w: 52, minH: 30,
+            inputs: ['A', 'B'], outputs: ['S', 'C'], w: 40, h: 26,
             truth: (v) => ({ S: v.A ^ v.B, C: v.A & v.B }),
         },
         {
@@ -127,7 +175,7 @@
             brief: 'Add three bits: two operands and a carry in.',
             hint: 'Two half adders and an Or. The first adds A and B, the second '
                 + 'adds Cin to that sum; either carry out sets Cout.',
-            inputs: ['A', 'B', 'Cin'], outputs: ['S', 'Cout'], w: 46, minH: 20,
+            inputs: ['A', 'B', 'Cin'], outputs: ['S', 'Cout'], w: 42, h: 26,
             truth: (v) => {
                 const n = v.A + v.B + v.Cin;
                 return { S: n & 1, Cout: n > 1 ? 1 : 0 };
@@ -141,7 +189,7 @@
                 + 'one’s Cin. The bottom adder’s Cin is tied to −V.',
             inputs: [...busNames('A', 4), ...busNames('B', 4)],
             outputs: [...busNames('S', 4), 'Cout'],
-            w: 62, minH: 30,
+            w: 56, h: 32,
             truth: (v) => {
                 const n = busVal(v, 'A', 4) + busVal(v, 'B', 4);
                 return { ...busBits('S', 4, n & 15), Cout: n > 15 ? 1 : 0 };
@@ -153,7 +201,7 @@
             hint: 'You could paste the 4-bit adder and tie B to 1 — but a chain of '
                 + 'half adders is far smaller, since one operand is a constant.',
             inputs: busNames('A', 4), outputs: [...busNames('S', 4), 'Cout'],
-            w: 50, minH: 24,
+            w: 44, h: 26,
             truth: (v) => {
                 const n = busVal(v, 'A', 4) + 1;
                 return { ...busBits('S', 4, n & 15), Cout: n > 15 ? 1 : 0 };
@@ -166,7 +214,7 @@
             hint: 'One mux per bit, all four sharing the same control signal. '
                 + 'This is the mux you have been using, widened to a bus.',
             inputs: ['SEL', ...busNames('A', 4), ...busNames('B', 4)],
-            outputs: busNames('Q', 4), w: 54, minH: 28,
+            outputs: busNames('Q', 4), w: 48, h: 30,
             truth: (v) => busBits('Q', 4, v.SEL ? busVal(v, 'A', 4) : busVal(v, 'B', 4)),
         },
         {
@@ -175,14 +223,14 @@
                 + 'processor branches on.',
             hint: 'Or the four bits together, then invert. A tree of Ors is shallower '
                 + 'than a chain, though either passes.',
-            inputs: busNames('A', 4), outputs: ['Z'], w: 44, minH: 22,
+            inputs: busNames('A', 4), outputs: ['Z'], w: 36, h: 22,
             truth: (v) => ({ Z: busVal(v, 'A', 4) === 0 ? 1 : 0 }),
         },
         {
             id: 'negate4', chapter: 'control', title: 'Two’s complement', subtitle: '−A',
             brief: 'Negate a 4-bit number: invert every bit, then add one.',
             hint: 'Four inverters feeding the incrementer you already built.',
-            inputs: busNames('A', 4), outputs: busNames('Q', 4), w: 54, minH: 24,
+            inputs: busNames('A', 4), outputs: busNames('Q', 4), w: 46, h: 26,
             truth: (v) => busBits('Q', 4, (-busVal(v, 'A', 4)) & 15),
         },
 
@@ -198,7 +246,7 @@
                 + 'takes itself, which is what makes it remember. You will want an '
                 + 'inverter in the loop.',
             sequential: true,
-            inputs: ['D', 'E'], outputs: ['Q'], w: 44, minH: 26,
+            inputs: ['D', 'E'], outputs: ['Q'], w: 28, h: 20,
             script: loadHoldScript('D', 1, 'E'),
             step: (v, prev) => ({ Q: v.E ? v.D : prev.Q }),
         },
@@ -209,7 +257,7 @@
             hint: 'Paste the D latch four times and run E to all of them. This is the '
                 + 'first thing in the campaign that is genuinely just copies.',
             sequential: true,
-            inputs: [...busNames('D', 4), 'E'], outputs: busNames('Q', 4), w: 62, minH: 34,
+            inputs: [...busNames('D', 4), 'E'], outputs: busNames('Q', 4), w: 54, h: 34,
             script: loadHoldScript('D', 4, 'E'),
             step: (v, prev) => (v.E ? busBits('Q', 4, busVal(v, 'D', 4)) : { ...prev }),
         },
@@ -221,9 +269,10 @@
     // than as the whole thing.
     const CHAPTERS = [
         {
-            id: 'logic', title: 'Logic',
+            id: 'basics', title: 'Basics',
             blurb: 'Everything is built from one part: a mux, wired as a relay. '
-                + 'Start by making it behave like the gates you know.',
+                + 'Start by meeting the tools, then make that one part behave '
+                + 'like the gates you already know.',
         },
         {
             id: 'arith', title: 'Arithmetic',
@@ -277,15 +326,13 @@
     // The full geometry of a level's board: size, where each named pad sits,
     // and where the player's free build area is. Pure - it reads nothing from
     // the model - so the UI, the verifier and the tests all agree on it.
-    // A board is never smaller than this regardless of pad count: two rows of
-    // mux plus room to route above and below is the smallest thing anyone can
-    // actually build in, and a 1-input level would otherwise get a 5-row slot.
-    const MIN_BOARD_H = 22;
-
+    // Boards are sized per level (see the note on LEVELS). The floor here is
+    // only a backstop against a typo'd `h` that could not hold its own pads,
+    // not a design opinion — the design opinion is that boards are tight.
     function layout(level) {
         const inL = rowsFor(level.inputs), outL = rowsFor(level.outputs);
         const w = level.w || 40;
-        const h = Math.max(level.minH || 0, MIN_BOARD_H, Math.max(inL.span, outL.span) + 4);
+        const h = Math.max(level.h || 0, Math.max(inL.span, outL.span) + 2);
         const place = (side, l, x) => l.rows.map(({ name, row }) => ({
             name, side, x, y: Math.floor((h - l.span) / 2) + row,
         }));
@@ -475,6 +522,61 @@
         return { passed: !failure, cases, failure, level: level.id };
     }
 
+    // ===== Watching it run =====
+    //
+    // `verify` above answers the question in a few milliseconds, which is the
+    // right thing for a test suite and the wrong thing for a person: passing a
+    // level should look like the circuit doing its job, not like a word
+    // appearing. This drives the same vectors through the same board, but one
+    // simulation tick at a time under the caller's control, so the UI can let
+    // the charge actually travel and fill in a truth table as it goes.
+    //
+    // Deliberately NOT a second implementation of the rules: it applies the
+    // same vectors in the same order with the same settle condition. The
+    // verdict still comes from `verify`; this is the performance of it.
+    function replay(level) {
+        const g = layout(level);
+        const budget = settleBudget(level);
+        const vectors = vectorsFor(level);
+        let index = -1, quietFor = 0, elapsed = 0, prevCells = null;
+        return {
+            total: vectors.length,
+            get index() { return index; },
+            // Cold start. Sequential levels reset here and only here; for
+            // everything else each vector gets its own reset in begin().
+            start() {
+                M.resetCharges();
+                prevCells = null; quietFor = 0; elapsed = 0; index = -1;
+            },
+            // Move to vector n and drive the input pads to it.
+            begin(n) {
+                index = n;
+                if (!level.sequential) M.resetCharges();
+                for (const p of g.inputs) M.setToggle(p.x, p.y, !!vectors[n][p.name]);
+                prevCells = null; quietFor = 0; elapsed = 0;
+            },
+            // One simulation step. Returns true once the board has come to
+            // rest (or the budget is spent), which is when the outputs mean
+            // something and the caller may move on.
+            tick() {
+                M.stepSimulation();
+                elapsed++;
+                const cur = M.copyCells();
+                let same = prevCells !== null;
+                if (same) for (let i = 0; i < cur.length; i++) if (cur[i] !== prevCells[i]) { same = false; break; }
+                prevCells = cur;
+                quietFor = same ? quietFor + 1 : 0;
+                return quietFor >= 1 || elapsed >= budget;
+            },
+            outputs() {
+                const got = {};
+                for (const p of g.outputs) got[p.name] = M.ledIsOn(M.getCell(p.x, p.y)) ? 1 : 0;
+                return got;
+            },
+            vectorAt: (n) => vectors[n],
+        };
+    }
+
     // ===== Solved-level components =====
     //
     // Solving a level puts the circuit on the shelf under the level's name, so
@@ -503,9 +605,9 @@
         try {
             const raw = JSON.parse(localStorage.getItem(PROGRESS_KEY) || 'null');
             if (raw && typeof raw === 'object' && raw.completed && typeof raw.completed === 'object')
-                return { completed: raw.completed, current: raw.current || null };
+                return { completed: raw.completed, current: raw.current || null, mode: raw.mode || 'campaign' };
         } catch (e) { }
-        return { completed: {}, current: null };
+        return { completed: {}, current: null, mode: 'campaign' };
     }
     function saveProgress(p) {
         try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(p)); } catch (e) { }
@@ -538,7 +640,7 @@
         LEVELS, CHAPTERS,
         getLevel, levelIndex, levelsIn, nextLevel,
         layout, applyBoard, loadBoard, padLabels,
-        vectorsFor, verify, settle, settleBudget, solutionClip, loadHoldScript,
+        vectorsFor, verify, replay, settle, settleBudget, solutionClip, loadHoldScript,
         loadProgress, saveProgress, isUnlocked,
         saveCircuit, loadCircuit, clearCircuit,
         busNames, busVal, busBits,

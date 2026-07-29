@@ -100,6 +100,8 @@
                      entirely in the sandbox. -->
                 <div id="levelBar" class="level-bar">
                     <div class="level-bar-main">
+                        <button id="levelCollapseBtn" class="icon-btn collapse-btn"
+                            title="Minimize the level text (H)" aria-expanded="true">&#x25BE;</button>
                         <div class="level-bar-text">
                             <span id="levelTitle" class="level-title"></span>
                             <span id="levelBrief" class="level-brief"></span>
@@ -112,7 +114,11 @@
                             <button id="levelsBtn" class="tool-btn" title="Back to the level list">Levels</button>
                         </div>
                     </div>
-                    <div id="levelHint" class="level-hint"></div>
+                    <!-- Everything below the title row is what collapsing hides. -->
+                    <div id="levelDetail" class="level-detail">
+                        <ol id="levelSteps" class="level-steps"></ol>
+                        <div id="levelHint" class="level-hint"></div>
+                    </div>
                     <div id="levelResult" class="level-result"></div>
                 </div>
 
@@ -145,8 +151,9 @@
         <button id="gridToggleBtn" class="menu-item" role="menuitem" aria-pressed="true"
             title="Remembered separately for build vs. Interact">Grid lines<span class="menu-hint">G</span></button>
         <div class="menu-sep"></div>
-        <button id="campaignBtn" class="menu-item" role="menuitem">Campaign&hellip;<span class="menu-hint">build a
-                computer</span></button>
+        <button id="campaignBtn" class="menu-item" role="menuitem">Campaign&hellip;<span class="menu-hint">levels</span></button>
+        <button id="sandboxToggleBtn" class="menu-item" role="menuitem">Sandbox<span class="menu-hint">free
+                board</span></button>
         <button id="componentsBtn" class="menu-item" role="menuitem">Components&hellip;</button>
         <div class="menu-sep"></div>
         <button id="exportBtn" class="menu-item" role="menuitem">Export circuit<span class="menu-hint">to
@@ -187,7 +194,7 @@
         </p>
         <div id="levelsList" class="levels-list"></div>
         <div class="modal-panel-footer">
-            <button id="sandboxBtn" class="tool-btn">Leave the campaign</button>
+            <button id="sandboxBtn" class="tool-btn">Open the sandbox</button>
             <button id="resetProgressBtn" class="tool-btn danger">Reset progress</button>
         </div>
     </div>
