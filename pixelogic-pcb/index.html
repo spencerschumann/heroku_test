@@ -94,6 +94,28 @@
                 <div id="cellInfo" class="cell-info"></div>
                 <div id="saveStatus" class="save-status"></div>
 
+                <!-- The active level's brief and its Verify button. An
+                     overlay, like everything else here, so entering a level
+                     never resizes the canvas out from under a drag. Hidden
+                     entirely in the sandbox. -->
+                <div id="levelBar" class="level-bar">
+                    <div class="level-bar-main">
+                        <div class="level-bar-text">
+                            <span id="levelTitle" class="level-title"></span>
+                            <span id="levelBrief" class="level-brief"></span>
+                        </div>
+                        <div class="level-bar-actions">
+                            <button id="hintBtn" class="tool-btn" title="Show a hint"
+                                aria-pressed="false">Hint</button>
+                            <button id="verifyBtn" class="tool-btn primary"
+                                title="Run this level's test vectors against your circuit">Verify</button>
+                            <button id="levelsBtn" class="tool-btn" title="Back to the level list">Levels</button>
+                        </div>
+                    </div>
+                    <div id="levelHint" class="level-hint"></div>
+                    <div id="levelResult" class="level-result"></div>
+                </div>
+
                 <!-- Only appears while there is something to act on, so five
                      permanently-greyed buttons no longer sit in the toolbar. -->
                 <div id="selectionActions" class="selection-actions" role="toolbar" aria-label="Selection actions">
@@ -123,6 +145,8 @@
         <button id="gridToggleBtn" class="menu-item" role="menuitem" aria-pressed="true"
             title="Remembered separately for build vs. Interact">Grid lines<span class="menu-hint">G</span></button>
         <div class="menu-sep"></div>
+        <button id="campaignBtn" class="menu-item" role="menuitem">Campaign&hellip;<span class="menu-hint">build a
+                computer</span></button>
         <button id="componentsBtn" class="menu-item" role="menuitem">Components&hellip;</button>
         <div class="menu-sep"></div>
         <button id="exportBtn" class="menu-item" role="menuitem">Export circuit<span class="menu-hint">to
@@ -150,8 +174,27 @@
             Save&hellip;</div>
     </div>
 
+    <!-- ---- Campaign level browser ---- -->
+    <div id="levelsBackdrop" class="modal-backdrop"></div>
+    <div id="levelsPanel" class="modal-panel wide-panel" role="dialog" aria-label="Campaign">
+        <div class="modal-panel-header">
+            <span>Campaign</span>
+            <button id="levelsCloseBtn" class="icon-btn" title="Close">&times;</button>
+        </div>
+        <p class="panel-intro">
+            One part builds everything: a mux, wired as a relay. Start with a single inverter and work up
+            &mdash; each level you solve is saved as a component you can paste into the next.
+        </p>
+        <div id="levelsList" class="levels-list"></div>
+        <div class="modal-panel-footer">
+            <button id="sandboxBtn" class="tool-btn">Leave the campaign</button>
+            <button id="resetProgressBtn" class="tool-btn danger">Reset progress</button>
+        </div>
+    </div>
+
     <script src="model.js"></script>
     <script src="view.js"></script>
+    <script src="game.js"></script>
     <script src="ui.js"></script>
     <script src="pwa.js"></script>
 </body>

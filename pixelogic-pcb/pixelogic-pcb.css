@@ -529,3 +529,147 @@ html, body {
     background: #5a1f1f;
     border-color: #a33;
 }
+
+/* ---- Campaign ----------------------------------------------------------
+   The level bar is an overlay pinned to the bottom of the canvas, not a
+   strip of chrome: entering a level must not resize the viewport (that is
+   what used to shift the canvas out from under an in-progress drag), and on
+   a phone the brief has to be able to sit over the board rather than steal
+   height from it. It is hidden outright in the sandbox. */
+.level-bar {
+    display: none;
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    background: rgba(20, 20, 20, 0.94);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    z-index: 6;
+    font-size: 13px;
+    max-height: 60%;
+    overflow-y: auto;
+}
+.level-bar.open { display: block; }
+
+.level-bar-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+.level-bar-text { flex: 1 1 auto; min-width: 0; }
+.level-title { font-weight: 600; display: block; }
+.level-brief { color: var(--text-dim); display: block; margin-top: 2px; }
+
+/* The actions never wrap or shrink — Verify is the one control that must be
+   reachable at every width, so it keeps its size while the brief reflows. */
+.level-bar-actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+.tool-btn.primary {
+    background: #1f4b34;
+    border-color: #2f6b4a;
+    color: var(--accent);
+}
+.tool-btn.primary:hover { background: #276044; }
+
+.level-hint, .level-result { display: none; margin-top: 8px; }
+.level-hint.open, .level-result.open { display: block; }
+.level-hint {
+    color: var(--text-dim);
+    border-left: 2px solid var(--pcb-gold);
+    padding-left: 8px;
+}
+
+.result-line { font-weight: 600; }
+.result-pass { color: var(--accent); }
+.result-fail { color: #ff8a8a; }
+.result-note { color: var(--text-dim); font-weight: 400; margin-top: 4px; }
+
+/* The failing row of the truth table, laid out as a table so the expected and
+   actual columns line up bit for bit — the whole point is to see which output
+   differs, not merely that one does. */
+.result-table {
+    margin-top: 6px;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+.result-table th, .result-table td {
+    padding: 2px 8px 2px 0;
+    text-align: left;
+    font-weight: 400;
+}
+.result-table th { color: var(--text-dim); font-size: 12px; }
+.result-table td.bits { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.result-table td.wrong { color: #ff8a8a; }
+
+/* ---- Level browser ---- */
+.wide-panel { min-width: min(560px, 92vw); }
+.panel-intro { color: var(--text-dim); font-size: 13px; margin: 0 0 12px; }
+
+.levels-list { display: flex; flex-direction: column; gap: 14px; }
+.chapter-title { font-weight: 600; margin-bottom: 2px; }
+.chapter-blurb { color: var(--text-dim); font-size: 12px; margin-bottom: 6px; }
+.chapter-levels { display: flex; flex-direction: column; gap: 4px; }
+
+.level-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    background: var(--btn-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    padding: 7px 10px;
+    min-height: var(--hit);
+    cursor: pointer;
+}
+.level-row:hover { background: var(--btn-bg-hover); }
+.level-row[disabled] { opacity: 0.4; cursor: default; }
+.level-row[disabled]:hover { background: var(--btn-bg); }
+.level-row.current { border-color: var(--accent); }
+
+/* A fixed-width status glyph keeps every title starting at the same x, so the
+   list reads as a ladder rather than as ragged rows. */
+.level-status { flex: 0 0 1.2em; color: var(--text-dim); }
+.level-status.done { color: var(--accent); }
+.level-row-title { flex: 1 1 auto; }
+.level-row-sub { color: var(--text-dim); flex: 0 0 auto; }
+
+/* Chapters with no levels yet: the stated destination, listed so the shipped
+   rungs read as the start of a ladder rather than as the whole of it. */
+.roadmap { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.roadmap span {
+    color: var(--text-dim);
+    font-size: 12px;
+    border: 1px dashed var(--panel-border);
+    border-radius: 4px;
+    padding: 2px 6px;
+}
+
+.modal-panel-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--panel-border);
+}
+
+/* The level bar owns the bottom edge, which is where the selection action bar
+   normally floats, so inside a level that bar moves to the top-centre — the
+   one strip of the canvas nothing else claims (the cell readout sits
+   top-left, the save status top-right). A fixed swap rather than an offset
+   measured from the level bar, whose height changes with the brief, the hint
+   and the result table. */
+#app.in-level .selection-actions {
+    bottom: auto;
+    top: max(8px, env(safe-area-inset-top));
+}

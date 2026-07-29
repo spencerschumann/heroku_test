@@ -12,7 +12,7 @@
 // of old cached assets (network-first already keeps content fresh online, so
 // this is mostly housekeeping).
 
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 const CACHE_NAME = `pixelogic-pcb-${CACHE_VERSION}`;
 
 const ASSETS = [
@@ -21,6 +21,7 @@ const ASSETS = [
     './pixelogic-pcb.css',
     './model.js',
     './view.js',
+    './game.js',
     './ui.js',
     './pwa.js',
     './manifest.webmanifest',

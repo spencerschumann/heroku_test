@@ -49,6 +49,11 @@
     // region is selected".
     var objectHighlight = null;
 
+    // Campaign pad labels: [{x, y, text, side:'left'|'right'}], drawn just
+    // outside the cell so a level's terminals are named on the board itself
+    // rather than only in the brief. Empty in the sandbox.
+    var labels = [];
+
     function cellSize() { return M.CELL_SIZE * zoom; }
 
     function resizeCanvas() {
@@ -840,8 +845,29 @@
             ctx.stroke();
         }
 
+        if (labels.length) drawLabels(cs);
         if (selectionRect) drawOverlayRect(selectionRect, '#7dffb3', 'rgba(125, 255, 179, 0.12)');
         if (objectHighlight) drawObjectHighlight(objectHighlight);
+    }
+
+    // Pad names, in the black margin beyond the board's edge rather than over
+    // the build area. The text scales with the zoom but is floored and capped,
+    // so the labels stay legible on a zoomed-out board without swelling into
+    // the circuit on a zoomed-in one.
+    function drawLabels(cs) {
+        const size = Math.max(9, Math.min(16, cs * 0.6));
+        ctx.font = `600 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#9a9a9a';
+        const gap = Math.max(4, cs * 0.25);
+        for (const l of labels) {
+            const cy = panY + (l.y + 0.5) * cs;
+            if (cy < -size || cy > canvas.height + size) continue;
+            ctx.textAlign = l.side === 'left' ? 'right' : 'left';
+            const cx = l.side === 'left' ? panX + l.x * cs - gap : panX + (l.x + 1) * cs + gap;
+            ctx.fillText(l.text, cx, cy);
+        }
+        ctx.textAlign = 'left';
     }
 
     // Translucent wash over each cell of the grabbed object, outlined only
@@ -890,12 +916,17 @@
         panY = Math.max(marginY - gh, Math.min(canvas.height - marginY, panY));
     }
 
-    function fitToWindow() {
+    // `insetBottom` reserves height at the foot of the canvas for an overlay
+    // that sits on top of it (the campaign's level bar), so fitting a board
+    // puts the whole board in the part still actually visible rather than
+    // tucking its bottom rows behind the bar.
+    function fitToWindow(insetBottom) {
         resizeCanvas();
-        const cs = Math.min(canvas.width / M.GRID_W, canvas.height / M.GRID_H);
+        const usable = Math.max(80, canvas.height - (insetBottom || 0));
+        const cs = Math.min(canvas.width / M.GRID_W, usable / M.GRID_H);
         zoom = Math.max(0.25, cs / M.CELL_SIZE);
         panX = (canvas.width - M.GRID_W * cellSize()) / 2;
-        panY = (canvas.height - M.GRID_H * cellSize()) / 2;
+        panY = (usable - M.GRID_H * cellSize()) / 2;
     }
 
     window.PixelogicView = {
@@ -914,6 +945,8 @@
             panX -= leftCells * cellSize();
             panY -= topCells * cellSize();
         },
+        get labels() { return labels; },
+        setLabels(list) { labels = list || []; },
         setSelection(r) { selectionRect = r; },
         setObjectHighlight(cellsList) { objectHighlight = cellsList; },
         get gridVisible() { return gridVisible; },

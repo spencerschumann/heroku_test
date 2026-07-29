@@ -123,11 +123,39 @@
     var nextCells = new Uint8Array(GRID_W * GRID_H);
     var roles = new Array(GRID_W * GRID_H).fill(null);
     var tickCount = 0;
+    // Locked cells (game.js): the campaign's fixed input/output pads. Every
+    // structural edit path refuses to touch one, so a level's terminals stay
+    // where the verifier expects them however the player rearranges the rest.
+    // Empty (all zero) in the sandbox, which is the only state the editor
+    // itself ever produces.
+    var locked = new Uint8Array(GRID_W * GRID_H);
+    var anyLocked = false;
 
     function idx(x, y) { return y * GRID_W + x; }
     function inBounds(x, y) { return x >= 0 && x < GRID_W && y >= 0 && y < GRID_H; }
     function getCell(x, y) { return inBounds(x, y) ? cells[idx(x, y)] : ID_INSULATOR_PLAIN; }
     function setCellRaw(x, y, id) { if (inBounds(x, y)) cells[idx(x, y)] = id; }
+    function isLocked(x, y) { return anyLocked && inBounds(x, y) && locked[idx(x, y)] === 1; }
+
+    // Replaces the whole lock set with the given cell list ([[x,y],...]).
+    // Called once when a level loads and cleared on the way back to the
+    // sandbox; nothing incremental, so there's no partial state to get wrong.
+    function setLockedCells(list) {
+        locked.fill(0);
+        anyLocked = false;
+        for (const [x, y] of (list || [])) {
+            if (!inBounds(x, y)) continue;
+            locked[idx(x, y)] = 1;
+            anyLocked = true;
+        }
+    }
+    function lockedCells() {
+        const out = [];
+        if (!anyLocked) return out;
+        for (let i = 0; i < locked.length; i++)
+            if (locked[i] === 1) out.push([i % GRID_W, Math.floor(i / GRID_W)]);
+        return out;
+    }
 
     // A wire pixel whose four orthogonal neighbors are all wires is a
     // crossover: the two axes pass over each other without connecting. Purely
@@ -166,7 +194,7 @@
     // ===== Painting =====
     // Colors: 'insulator', 'conductor', 'gold', 'gray'
     function paintCell(x, y, color) {
-        if (!inBounds(x, y)) return;
+        if (!inBounds(x, y) || isLocked(x, y)) return;
         let id;
         switch (color) {
             case 'conductor': id = makeConductor(OFF); break;
@@ -215,7 +243,7 @@
             // the sweep shouldn't silently clobber back to plain gray.
             for (let i = -lo; i <= hi; i++) {
                 const cx = gx + along[0] * i - dx, cy = gy + along[1] * i - dy;
-                if (!inBounds(cx, cy)) continue;
+                if (!inBounds(cx, cy) || isLocked(cx, cy)) continue;
                 const existing = getCell(cx, cy);
                 if (existing === ID_POS || existing === ID_NEG) continue;
                 setCellRaw(cx, cy, makeGray(OFF, false));
@@ -263,6 +291,13 @@
     function toggleAt(x, y) {
         if (!inBounds(x, y) || !isToggle(cells[idx(x, y)])) return false;
         floodPad(x, y, isToggle, toggleIsOn(cells[idx(x, y)]) ? ID_TOGGLE_OFF : ID_TOGGLE_ON);
+        return true;
+    }
+    // Absolute form of toggleAt, for driving a level's input pads to a test
+    // vector: a flip would depend on where the previous case left the pad.
+    function setToggle(x, y, on) {
+        if (!inBounds(x, y) || !isToggle(cells[idx(x, y)])) return false;
+        floodPad(x, y, isToggle, on ? ID_TOGGLE_ON : ID_TOGGLE_OFF);
         return true;
     }
 
@@ -787,14 +822,20 @@
     // by (offX, offY). Used both by auto-expansion and by load/undo restoring a
     // different size.
     function resizeGrid(newW, newH, offX, offY, keepContent) {
-        const oldW = GRID_W, oldH = GRID_H, old = cells;
+        const oldW = GRID_W, oldH = GRID_H, old = cells, oldLocked = locked;
         const newCells = new Uint8Array(newW * newH); // 0 = insulator
+        const newLocked = new Uint8Array(newW * newH);
         if (keepContent) {
             for (let y = 0; y < oldH; y++)
-                for (let x = 0; x < oldW; x++)
+                for (let x = 0; x < oldW; x++) {
                     newCells[(y + offY) * newW + (x + offX)] = old[y * oldW + x];
+                    newLocked[(y + offY) * newW + (x + offX)] = oldLocked[y * oldW + x];
+                }
+        } else {
+            anyLocked = false; // a wholesale reload brings its own locks, if any
         }
         cells = newCells;
+        locked = newLocked;
         nextCells = new Uint8Array(newW * newH);
         roles = new Array(newW * newH).fill(null);
         GRID_W = newW; GRID_H = newH;
@@ -821,8 +862,17 @@
         return { left, top, right, bottom };
     }
 
+    // With locks in play (a campaign level) "clear" means "clear what the
+    // player drew": the board keeps its size and its fixed I/O pads, so
+    // starting over doesn't destroy the level's terminals. In the sandbox
+    // there are no locks and this is the original full reset.
     function clearGrid() {
-        resizeGrid(DEFAULT_W, DEFAULT_H, 0, 0, false);
+        if (anyLocked) {
+            for (let i = 0; i < cells.length; i++)
+                if (locked[i] !== 1) cells[i] = ID_INSULATOR_PLAIN;
+        } else {
+            resizeGrid(DEFAULT_W, DEFAULT_H, 0, 0, false);
+        }
         tickCount = 0;
         recomputeRoles();
     }
@@ -912,7 +962,7 @@
         const r = normalizeRect(x0, y0, x1, y1);
         for (let y = r.y0; y <= r.y1; y++)
             for (let x = r.x0; x <= r.x1; x++)
-                cells[idx(x, y)] = ID_INSULATOR_PLAIN;
+                if (!isLocked(x, y)) cells[idx(x, y)] = ID_INSULATOR_PLAIN;
         recomputeRoles();
     }
 
@@ -926,7 +976,7 @@
             if (gy < 0 || gy >= GRID_H) continue;
             for (let x = 0; x < clip.w; x++) {
                 const gx = x0 + x;
-                if (gx < 0 || gx >= GRID_W) continue;
+                if (gx < 0 || gx >= GRID_W || isLocked(gx, gy)) continue;
                 cells[idx(gx, gy)] = stripId(clip.data[y * clip.w + x] & 0xff);
             }
         }
@@ -939,8 +989,21 @@
     // reorientation step. Rotation keeps the region's top-left anchor and
     // swaps its w/h; the new bounds (clipped to the grid) are returned so
     // the caller can update its selection.
+    // A region holding any locked cell can't be rotated or mirrored: the
+    // transform would slide a fixed I/O pad off its coordinates. Refusing the
+    // whole operation is the honest answer — silently transforming everything
+    // *except* the pad would scramble the circuit around it.
+    function regionHasLocked(r) {
+        if (!anyLocked) return false;
+        for (let y = r.y0; y <= r.y1; y++)
+            for (let x = r.x0; x <= r.x1; x++)
+                if (locked[idx(x, y)] === 1) return true;
+        return false;
+    }
+
     function rotateRegionCW(x0, y0, x1, y1) {
         const r = normalizeRect(x0, y0, x1, y1);
+        if (regionHasLocked(r)) return { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1 };
         const clip = copyRegion(r.x0, r.y0, r.x1, r.y1);
         for (let y = r.y0; y <= r.y1; y++)
             for (let x = r.x0; x <= r.x1; x++)
@@ -962,6 +1025,7 @@
 
     function mirrorRegionH(x0, y0, x1, y1) {
         const r = normalizeRect(x0, y0, x1, y1);
+        if (regionHasLocked(r)) return;
         for (let y = r.y0; y <= r.y1; y++) {
             for (let lo = r.x0, hi = r.x1; lo <= hi; lo++, hi--) {
                 const a = stripId(cells[idx(lo, y)]), b = stripId(cells[idx(hi, y)]);
@@ -1401,6 +1465,17 @@
         });
         const objSet = new Set(objCells.map(([x, y]) => idx(x, y)));
         if (objSet.size !== objCells.length) return { ok: false }; // overlapping picks
+        // A level's fixed I/O pad is not draggable, and nothing may be dropped
+        // onto one. (Re-routing can't hit a locked cell on its own: the router
+        // only lays wire through insulator, and a locked cell always holds a
+        // pad.) Checked before anything is written, so there's nothing to undo.
+        if (anyLocked) {
+            const dest = transformObjectCells(objCells, dx, dy, quarterTurns);
+            for (let i = 0; i < objCells.length; i++) {
+                if (isLocked(objCells[i][0], objCells[i][1]) || isLocked(dest[i][0], dest[i][1]))
+                    return { ok: false, reason: 'locked' };
+            }
+        }
         const rawIds = objCells.map(([x, y]) => cells[idx(x, y)]);
         const ids = rawIds.map(stripId);
         // Every rejection path restores wholesale from this: the checks that
@@ -1730,7 +1805,12 @@
         get GRID_W() { return GRID_W; },
         get GRID_H() { return GRID_H; },
         OFF, ON, FALLING,
-        idx, inBounds, getCell, paintCell, colorOfCell, setSwitch, toggleAt, expandForBorder,
+        idx, inBounds, getCell, paintCell, colorOfCell, setSwitch, toggleAt, setToggle, expandForBorder,
+        isLocked, setLockedCells, lockedCells,
+        // Raw cell array copy — the campaign verifier compares consecutive
+        // ticks to decide a circuit has settled, which needs every bit of
+        // live charge, not the structural (charge-stripped) snapshot.
+        copyCells() { return cells.slice(); },
         isInsulatorId,
         isConductorId, conductorCharge,
         isXover, xoverV, xoverH, isCrossoverAt, cellConnects,

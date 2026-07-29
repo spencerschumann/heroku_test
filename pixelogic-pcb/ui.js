@@ -1,6 +1,14 @@
 (function (window) {
     const M = window.PixelogicModel;
     const V = window.PixelogicView;
+    const G = window.PixelogicGame;
+
+    // The active campaign level, or null in the sandbox. Almost everything
+    // about the editor is unchanged inside a level; what differs is where the
+    // circuit is saved, that the board is a fixed size with locked I/O pads,
+    // and that there is something to verify against.
+    let gameLevel = null;
+    let gameProgress = G.loadProgress();
 
     // drawMode is one of the four paint colors, 'select', or 'paste'.
     const PAINT_MODES = ['conductor', 'gold', 'gray', 'insulator'];
@@ -68,6 +76,21 @@
     const menuBackdrop = document.getElementById('menuBackdrop');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const gridToggleBtn = document.getElementById('gridToggleBtn');
+    const campaignBtn = document.getElementById('campaignBtn');
+    const levelsPanel = document.getElementById('levelsPanel');
+    const levelsBackdrop = document.getElementById('levelsBackdrop');
+    const levelsCloseBtn = document.getElementById('levelsCloseBtn');
+    const levelsListEl = document.getElementById('levelsList');
+    const sandboxBtn = document.getElementById('sandboxBtn');
+    const resetProgressBtn = document.getElementById('resetProgressBtn');
+    const levelBar = document.getElementById('levelBar');
+    const levelTitleEl = document.getElementById('levelTitle');
+    const levelBriefEl = document.getElementById('levelBrief');
+    const levelHintEl = document.getElementById('levelHint');
+    const levelResultEl = document.getElementById('levelResult');
+    const hintBtn = document.getElementById('hintBtn');
+    const verifyBtn = document.getElementById('verifyBtn');
+    const levelsBtn = document.getElementById('levelsBtn');
 
     // Grid-line visibility remembers separate on/off preferences for build
     // tools vs. Interact (the anticipated default: on while drawing, off
@@ -122,12 +145,25 @@
     // Every edit schedules a save, so the circuit survives reloads without a
     // manual Save button; Export/Import remain for sharing between browsers.
     let saveTimer = null;
+    // The sandbox circuit and each level's attempt are stored separately, so
+    // switching between them never overwrites the other. Writes go wherever
+    // the board currently belongs.
+    function persistCircuit() {
+        if (gameLevel) G.saveCircuit(gameLevel.id, M.serialize());
+        else { try { localStorage.setItem(CIRCUIT_KEY, M.serialize()); } catch (e) { } }
+    }
     function scheduleSave() {
         if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-            try { localStorage.setItem(CIRCUIT_KEY, M.serialize()); } catch (e) { }
-            saveTimer = null;
-        }, 300);
+        saveTimer = setTimeout(() => { persistCircuit(); saveTimer = null; }, 300);
+    }
+    // Anything that swaps the board out has to land the pending write first,
+    // or a debounced save fires after the swap and writes the new board into
+    // the old board's slot.
+    function flushSave() {
+        if (!saveTimer) return;
+        clearTimeout(saveTimer);
+        saveTimer = null;
+        persistCircuit();
     }
 
     // ---- View (zoom/pan) persistence ----
@@ -650,6 +686,10 @@
     // opposite way so the existing drawing stays put on screen. Returns the
     // {left, top, right, bottom} added.
     function applyExpansion() {
+        // A campaign board is a fixed size. Growing it would slide every cell
+        // — including the locked I/O pads the verifier addresses by
+        // coordinate — and the bounded workspace is part of the puzzle anyway.
+        if (gameLevel) return { left: 0, top: 0, right: 0, bottom: 0 };
         const g = M.expandForBorder();
         if (g.left || g.top) {
             V.compensateExpansion(g.left, g.top);
@@ -1176,6 +1216,7 @@
             // Dismissing an open overlay is all Escape does — deselecting
             // under it would be a second, unasked-for action.
             if (menuPanel.classList.contains('open')) { setMenuOpen(false); return; }
+            if (levelsPanel.classList.contains('open')) { closeLevels(); return; }
             closeComponents();
             if (arrange) abortArrange();          // mid-drag: put the object back
             else if (arrangeSel.length) { setArrangeSel([]); V.drawGrid(); }
@@ -1227,15 +1268,269 @@
         else if (e.key === 'g' || e.key === 'G') gridToggleBtn.click();
     });
 
+    // ---- Campaign ----------------------------------------------------------
+    //
+    // Entering a level swaps the whole board: the sandbox circuit is written
+    // back to its own key, the level's board (a saved attempt, or a fresh one)
+    // is loaded with its pads locked, and the editing history starts over —
+    // an undo across a board swap would restore the previous level's circuit
+    // into this one's grid.
+    function resetHistory() {
+        undoStack.length = 0;
+        redoStack.length = 0;
+        endUndoBatch();
+        setSelection(null);
+        setArrangeSel([]);
+        gridOrigin.x = 0;
+        gridOrigin.y = 0;
+        updateActionButtons();
+    }
+
+    function showBoard() {
+        V.resizeCanvas();
+        V.fitToWindow(gameLevel ? levelBar.offsetHeight + 16 : 0);
+        updateZoomLabel();
+        scheduleViewSave();
+        V.drawGrid();
+    }
+
+    function enterLevel(id) {
+        const level = G.getLevel(id);
+        if (!level || !G.isUnlocked(id, gameProgress)) return;
+        flushSave();
+        gameLevel = level;
+        G.loadBoard(level, G.loadCircuit(id));
+        V.setLabels(G.padLabels(level));
+        gameProgress.current = id;
+        G.saveProgress(gameProgress);
+        resetHistory();
+        setLevelResult(null);
+        setHintOpen(false);
+        updateLevelBar();
+        closeLevels();
+        // Build tools, not Interact: you arrive at a level to draw in it.
+        setDrawMode('conductor');
+        showBoard();
+    }
+
+    function exitToSandbox() {
+        flushSave();
+        gameLevel = null;
+        M.setLockedCells([]);
+        V.setLabels([]);
+        gameProgress.current = null;
+        G.saveProgress(gameProgress);
+        const saved = localStorage.getItem(CIRCUIT_KEY);
+        if (saved) M.deserialize(saved); else M.clearGrid();
+        resetHistory();
+        updateLevelBar();
+        closeLevels();
+        setDrawMode('conductor');
+        showBoard();
+    }
+
+    function updateLevelBar() {
+        levelBar.classList.toggle('open', !!gameLevel);
+        document.getElementById('app').classList.toggle('in-level', !!gameLevel);
+        if (!gameLevel) return;
+        levelTitleEl.textContent = gameLevel.subtitle
+            ? `${gameLevel.title} — ${gameLevel.subtitle}` : gameLevel.title;
+        levelBriefEl.textContent = gameLevel.brief;
+        levelHintEl.textContent = gameLevel.hint || '';
+        hintBtn.style.display = gameLevel.hint ? '' : 'none';
+    }
+
+    function setHintOpen(open) {
+        levelHintEl.classList.toggle('open', open);
+        hintBtn.setAttribute('aria-pressed', String(open));
+    }
+
+    // ---- Verification ----
+    // Renders one of three outcomes: solved, a specific failing row, or a
+    // circuit that never settled. The failing row is shown as expected-vs-got
+    // per output bit — "wrong" on its own tells you nothing you can act on.
+    function setLevelResult(html) {
+        levelResultEl.innerHTML = html || '';
+        levelResultEl.classList.toggle('open', !!html);
+    }
+
+    const bitList = (names, vals) => names.map((n) => `${n}=${vals[n] & 1}`).join(' ');
+
+    function failureHtml(level, failure, total) {
+        const rows = level.outputs.map((name) => {
+            const want = failure.expected[name] & 1, got = failure.actual[name] & 1;
+            return `<tr><td>${name}</td><td class="bits">${want}</td>`
+                + `<td class="bits${want === got ? '' : ' wrong'}">${got}</td></tr>`;
+        }).join('');
+        // In a sequential level the inputs alone say nothing — the same vector
+        // legitimately gives different answers at different points in the run —
+        // so the step number is the part that locates the fault.
+        const where = failure.step === undefined
+            ? 'these inputs'
+            : `step ${failure.step + 1} of ${total}, inputs`;
+        const why = failure.settled
+            ? `Wrong output at ${where}:`
+            : `Something is still oscillating at ${where} — the board never came to rest:`;
+        return `<div class="result-line result-fail">Not yet.</div>`
+            + `<div class="result-note">${why} <strong>${bitList(level.inputs, failure.inputs)}</strong></div>`
+            + `<table class="result-table"><tr><th>out</th><th>want</th><th>got</th></tr>${rows}</table>`
+            + (level.sequential
+                ? '<div class="result-note">A storage level is judged as one run: the board is '
+                + 'reset once and then walked through every step in order.</div>' : '');
+    }
+
+    // Solving a level puts the circuit on the components shelf under the
+    // level's name, which is how the next level gets built by pasting rather
+    // than by drawing it all again. An existing component of that name is left
+    // alone: it may be a better one the player saved by hand.
+    function shelveSolution(level) {
+        const clip = G.solutionClip(level);
+        if (!clip) return false;
+        const list = loadComponentList();
+        if (list.some((c) => c.name === level.title)) return false;
+        list.push({ name: level.title, w: clip.w, h: clip.h, data: Array.from(clip.data) });
+        saveComponentList(list);
+        return true;
+    }
+
+    function doVerify() {
+        if (!gameLevel) return;
+        const level = gameLevel;
+        setLevelResult('<div class="result-note">Running…</div>');
+        // Yield a frame first: verify() runs the whole vector set synchronously,
+        // so without this the "Running…" line never paints on a slow board.
+        requestAnimationFrame(() => {
+            const result = G.verify(level);
+            V.drawGrid();
+            if (!result.passed) {
+                setLevelResult(failureHtml(level, result.failure, level.script ? level.script.length : result.cases.length));
+                return;
+            }
+
+            const firstTime = !gameProgress.completed[level.id];
+            gameProgress.completed[level.id] = true;
+            G.saveProgress(gameProgress);
+            const shelved = shelveSolution(level);
+            const next = G.nextLevel(level.id);
+            const notes = [level.sequential
+                ? `Held through all ${result.cases.length} steps.`
+                : `Passed all ${result.cases.length} test cases.`];
+            if (shelved) notes.push(`Saved as the component “${level.title}”.`);
+            setLevelResult(`<div class="result-line result-pass">Solved${firstTime ? '' : ' (again)'}.</div>`
+                + `<div class="result-note">${notes.join(' ')}</div>`
+                + (next ? `<div class="result-note"><button class="tool-btn primary" id="nextLevelBtn">Next: ${next.title}</button></div>`
+                    : '<div class="result-note">That is the last level built so far — see the Campaign panel for what comes next.</div>'));
+            const nextBtn = document.getElementById('nextLevelBtn');
+            if (nextBtn) nextBtn.addEventListener('click', () => enterLevel(next.id));
+        });
+    }
+
+    // ---- Level browser ----
+    function renderLevels() {
+        levelsListEl.innerHTML = '';
+        for (const chapter of G.CHAPTERS) {
+            const section = document.createElement('div');
+            const title = document.createElement('div');
+            title.className = 'chapter-title';
+            title.textContent = chapter.title;
+            const blurb = document.createElement('div');
+            blurb.className = 'chapter-blurb';
+            blurb.textContent = chapter.blurb;
+            section.append(title, blurb);
+
+            const levels = G.levelsIn(chapter.id);
+            if (levels.length) {
+                const list = document.createElement('div');
+                list.className = 'chapter-levels';
+                for (const level of levels) {
+                    const done = !!gameProgress.completed[level.id];
+                    const open = G.isUnlocked(level.id, gameProgress);
+                    const row = document.createElement('button');
+                    row.className = 'level-row' + (gameLevel && gameLevel.id === level.id ? ' current' : '');
+                    row.disabled = !open;
+                    row.title = open ? level.brief : 'Solve the level before it to unlock this one';
+                    const status = document.createElement('span');
+                    status.className = 'level-status' + (done ? ' done' : '');
+                    status.textContent = done ? '✓' : (open ? '·' : '🔒');
+                    const name = document.createElement('span');
+                    name.className = 'level-row-title';
+                    name.textContent = level.title;
+                    const sub = document.createElement('span');
+                    sub.className = 'level-row-sub';
+                    sub.textContent = level.subtitle || '';
+                    row.append(status, name, sub);
+                    row.addEventListener('click', () => enterLevel(level.id));
+                    list.appendChild(row);
+                }
+                section.appendChild(list);
+            }
+            if (chapter.roadmap) {
+                const strip = document.createElement('div');
+                strip.className = 'roadmap';
+                for (const item of chapter.roadmap) {
+                    const chip = document.createElement('span');
+                    chip.textContent = item;
+                    strip.appendChild(chip);
+                }
+                section.appendChild(strip);
+            }
+            levelsListEl.appendChild(section);
+        }
+        sandboxBtn.disabled = !gameLevel;
+    }
+
+    function openLevels() {
+        renderLevels();
+        levelsPanel.classList.add('open');
+        levelsBackdrop.classList.add('open');
+    }
+    function closeLevels() {
+        levelsPanel.classList.remove('open');
+        levelsBackdrop.classList.remove('open');
+    }
+
+    function setupCampaign() {
+        campaignBtn.addEventListener('click', () => { setMenuOpen(false); openLevels(); });
+        levelsCloseBtn.addEventListener('click', closeLevels);
+        levelsBackdrop.addEventListener('click', closeLevels);
+        levelsBtn.addEventListener('click', openLevels);
+        sandboxBtn.addEventListener('click', exitToSandbox);
+        verifyBtn.addEventListener('click', doVerify);
+        hintBtn.addEventListener('click', () => setHintOpen(!levelHintEl.classList.contains('open')));
+        resetProgressBtn.addEventListener('click', () => {
+            if (!window.confirm('Forget which levels are solved, and discard every level circuit? '
+                + 'Your sandbox and saved components are untouched.')) return;
+            for (const level of G.LEVELS) G.clearCircuit(level.id);
+            gameProgress = { completed: {}, current: null };
+            G.saveProgress(gameProgress);
+            if (gameLevel) exitToSandbox(); else renderLevels();
+        });
+    }
+
     window.addEventListener('resize', () => { V.resizeCanvas(); V.drawGrid(); });
 
     function init() {
         setupToolbar();
         setupCanvasEvents();
-        const saved = localStorage.getItem(CIRCUIT_KEY);
-        if (saved) M.deserialize(saved);
+        setupCampaign();
+        // A level in progress is where the app was left, so that is where it
+        // comes back — the sandbox circuit stays in its own slot meanwhile.
+        const resume = gameProgress.current && G.getLevel(gameProgress.current);
+        if (resume && G.isUnlocked(resume.id, gameProgress)) {
+            gameLevel = resume;
+            G.loadBoard(resume, G.loadCircuit(resume.id));
+            V.setLabels(G.padLabels(resume));
+            updateLevelBar();
+        } else {
+            gameProgress.current = null;
+            const saved = localStorage.getItem(CIRCUIT_KEY);
+            if (saved) M.deserialize(saved);
+        }
         V.resizeCanvas();
-        if (!loadView()) V.fitToWindow();
+        // A restored viewport belongs to whichever board was on screen; after
+        // resuming into a level, fit that level's board instead.
+        if (gameLevel) V.fitToWindow(levelBar.offsetHeight + 16);
+        else if (!loadView()) V.fitToWindow();
         updateZoomLabel();
         updateActionButtons();
         V.drawGrid();
