@@ -361,14 +361,137 @@
                 if (grayVisited.has(i) || claimedGray.has(i)) continue;
                 if (!isGrayId(cells[i])) continue;
                 const blob = floodFill(x, y, (nx, ny) => isGrayId(cells[idx(nx, ny)]) && !claimedGray.has(idx(nx, ny)), grayVisited);
-                // Gray with no adjacent control band is either an isolated
-                // -V source (touches no gold at all) or, if it does touch
-                // gold without forming a valid mux, an inert stray fragment.
+                // Gray with no adjacent control band is either the second mux
+                // style — a 3x2 box of body cells and nothing else (see
+                // buildBoxMux) — or an isolated -V source. Gray that DOES
+                // touch gold without forming a valid band mux is an inert
+                // stray fragment; gold adjacency is also what keeps the two
+                // mux styles from ever competing for the same pixels, so a
+                // stray body row flush against a band mux still reads as the
+                // mistake it is rather than silently becoming a box.
                 const touchesGold = blob.some(([bx, by]) => DIRS.some(([dx, dy]) => isGoldId(getCell(bx + dx, by + dy))));
+                if (!touchesGold && buildBoxMux(blob)) continue;
                 const kind = touchesGold ? 'invalidGray' : 'isolatedGray';
                 markBlob(blob, kind);
             }
         }
+    }
+
+    // ===== Box mux: the second mux style =====
+    //
+    // Six gray pixels in a 3x2 rectangle, touching no gold at all — the whole
+    // device is body, with no control band. Which pixel is which terminal is
+    // decided entirely by what is wired to it:
+    //
+    //                    COM
+    //                     |
+    //              +---+---+---+
+    //       SEL ---|   |   |   |--- SEL      the COM-row corners
+    //              +---+---+---+
+    //              |   |   |   |
+    //              +-+-+---+-+-+
+    //                |         |
+    //              NO/NC     NO/NC
+    //
+    //  - COM is the long side with a wire at its MIDDLE. That's the
+    //    discriminator precisely because a working mux has its OTHER long
+    //    side wired at the ENDS, so "which side has a wire" could never tell
+    //    the two apart. Any wire along the COM side joins COM; only the
+    //    middle one decides which side it is.
+    //  - The two end cells of the opposite long side are the switched pins.
+    //  - SEL goes on a SHORT side, at the one corner adjacent to the COM
+    //    side — one cell per end, not the whole short side. The end SEL is
+    //    wired to is NO, so select ON bridges the pin on SEL's own side and
+    //    OFF bridges the far one: the same convention as the band mux, whose
+    //    wired control corner also marks NO. Ties and nothing-wired default
+    //    to the first end, again as the band mux. The pin row's short faces
+    //    connect to nothing.
+    //
+    // The pin row's middle cell is an inert spacer that holds the sensed
+    // select charge — with no gold cell to keep it in, the select would
+    // otherwise have no state, and it is that stored bit that gives the
+    // control the same one-tick delay every other signal here has.
+    //
+    // Everything downstream (node charges, the fill-wave animation, region
+    // ops, rearrange) is shared with the band mux: the box's cells carry the
+    // same 'end'/'comMiddle' roles, and rowStart/along/toward keep their band
+    // meaning with d=0 the COM row and d=1 the pin row, so macroFootprint and
+    // objectAt need no special case.
+    function buildBoxMux(blob) {
+        if (blob.length !== 6) return false;
+        const xs = blob.map((c) => c[0]), ys = blob.map((c) => c[1]);
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        const w = maxX - minX + 1, h = maxY - minY + 1;
+        if (w * h !== 6) return false; // 6 cells filling a 6-cell bbox = solid 3x2
+        const along = w === 3 ? [1, 0] : [0, 1];
+        const perp = w === 3 ? [0, 1] : [1, 0];
+        const neg = ([dx, dy]) => [-dx, -dy];
+        const wiredAt = ([x, y], [dx, dy]) => {
+            const nx = x + dx, ny = y + dy;
+            return inBounds(nx, ny) && cells[idx(nx, ny)] !== ID_INSULATOR_PLAIN;
+        };
+        const gridAt = (i, d) => [minX + along[0] * i + perp[0] * d, minY + along[1] * i + perp[1] * d];
+
+        const comIsNear = !(!wiredAt(gridAt(1, 0), neg(perp)) && wiredAt(gridAt(1, 1), perp));
+        const toward = comIsNear ? perp : neg(perp); // COM row -> pin row
+        const comOut = neg(toward);                  // COM's outward face
+        const pinOut = toward;                       // the pins' outward face
+        const rowStart = gridAt(0, comIsNear ? 0 : 1);
+        const at = (i, d) => [rowStart[0] + along[0] * i + toward[0] * d,
+                              rowStart[1] + along[1] * i + toward[1] * d];
+
+        const macro = {
+            kind: 'box',
+            key: `box:${rowStart[0]},${rowStart[1]},${along[0]},${along[1]},${toward[0]},${toward[1]}`,
+            rowStart, along, toward,
+            selCell: at(1, 1),
+            // One select contact per end: the COM-row corner's outward face.
+            selFirst: neighborSpec(at(0, 0)[0], at(0, 0)[1], -along[0], -along[1]),
+            selLast: neighborSpec(at(2, 0)[0], at(2, 0)[1], along[0], along[1]),
+            nodes: {
+                first: { cells: [], ext: [] },
+                com: { cells: [], ext: [] },
+                last: { cells: [], ext: [] },
+            },
+        };
+        // A box cell's SEL faces lie along the long axis and its contact
+        // faces across it, so the two are told apart by axis alone — which is
+        // exactly what contribCharge is handed. Muting the long axis is what
+        // keeps a select wire an INPUT: without it the pin/COM charge sitting
+        // on the same cell would drive the select line straight back out.
+        const mutedAxis = axisOf(along[0], along[1]);
+        const gateAxis = axisOf(toward[0], toward[1]);
+
+        for (let i = 0; i < 3; i++) {
+            const [cx, cy] = at(i, 0);
+            const ext = [neighborSpec(cx, cy, comOut[0], comOut[1])];
+            macro.nodes.com.cells.push([cx, cy]);
+            macro.nodes.com.ext.push(...ext);
+            const sibs = [];
+            if (i > 0) sibs.push(at(i - 1, 0));
+            if (i < 2) sibs.push(at(i + 1, 0));
+            roles[idx(cx, cy)] = {
+                kind: 'comMiddle', macro, external: ext, sibs, mutedAxis,
+                // COM's gate to a pin is the cell straight across from it;
+                // the middle of the COM row faces the inert select spacer
+                // and so has no gate at all.
+                gates: i === 1 ? [] : [{ pos: at(i, 1), endIsFirst: i === 0, axis: gateAxis }],
+            };
+        }
+        for (const i of [0, 2]) {
+            const [px, py] = at(i, 1);
+            const ext = [neighborSpec(px, py, pinOut[0], pinOut[1])];
+            const node = i === 0 ? macro.nodes.first : macro.nodes.last;
+            node.cells.push([px, py]);
+            node.ext.push(...ext);
+            roles[idx(px, py)] = {
+                kind: 'end', macro, isFirst: i === 0, external: ext, sibs: [], mutedAxis,
+                gates: [{ pos: at(i, 0), endIsFirst: i === 0, axis: gateAxis }],
+            };
+        }
+        roles[idx(macro.selCell[0], macro.selCell[1])] = { kind: 'boxSel', macro };
+        return true;
     }
 
     // The blob's own cell nearest its bounding-box center — used to pick one
@@ -552,7 +675,7 @@
                 // The only in-body neighbors left are across the end<->COM
                 // boundary. endIsFirst: which end that boundary belongs to
                 // (the COM cell touches both ends, hence a list).
-                gates.push({ pos: [nx, ny], endIsFirst: isEnd ? i === 0 : ni === 0 });
+                gates.push({ pos: [nx, ny], endIsFirst: isEnd ? i === 0 : ni === 0, axis: axisOf(dx, dy) });
             }
             roles[idx(bx, by)] = isEnd
                 ? { kind: 'end', macro, isFirst: i === 0, external, gates }
@@ -574,19 +697,40 @@
         return false;
     }
 
+    // Whether a neighbor spec holds something (anything) — the box mux's
+    // form of isWired, over an absolute position rather than a cell's own
+    // directions, since its select contact is on a specific corner.
+    function specWired([nx, ny]) {
+        return inBounds(nx, ny) && cells[idx(nx, ny)] !== ID_INSULATOR_PLAIN;
+    }
+
+    // liveIsFirst: which end the drawn control wiring points at — the NO end
+    // in both mux styles, so control ON bridges it and OFF bridges the other
+    // (NC). controlOn: that control's own stored charge, one tick behind its
+    // input wire like every signal here — a band mux keeps it on the live
+    // gold corner, a box mux on its select spacer. activeIsFirst folds the
+    // two together into the single fact the body update needs: which end is
+    // bridged to COM this tick.
     function getMacroControl(macro) {
         if (macroControlCacheTick !== tickCount) { macroControlCache.clear(); macroControlCacheTick = tickCount; }
         let v = macroControlCache.get(macro.key);
         if (v) return v;
-        const firstRole = roles[idx(macro.firstCorner[0], macro.firstCorner[1])];
-        const lastRole = roles[idx(macro.lastCorner[0], macro.lastCorner[1])];
-        const firstWired = isWired(macro.firstCorner, firstRole.cornerExternalDirs);
-        const lastWired = isWired(macro.lastCorner, lastRole.cornerExternalDirs);
-        const liveIsFirst = !(!firstWired && lastWired);
-        const liveCornerPos = liveIsFirst ? macro.firstCorner : macro.lastCorner;
-        const liveId = cells[idx(liveCornerPos[0], liveCornerPos[1])];
-        const controlOn = isGoldId(liveId) && goldCharge(liveId) === ON;
-        v = { liveIsFirst, controlOn };
+        let liveIsFirst, controlOn;
+        if (macro.kind === 'box') {
+            liveIsFirst = !(!specWired(macro.selFirst) && specWired(macro.selLast));
+            const selId = cells[idx(macro.selCell[0], macro.selCell[1])];
+            controlOn = isGrayId(selId) && grayCharge(selId) === ON;
+        } else {
+            const firstRole = roles[idx(macro.firstCorner[0], macro.firstCorner[1])];
+            const lastRole = roles[idx(macro.lastCorner[0], macro.lastCorner[1])];
+            const firstWired = isWired(macro.firstCorner, firstRole.cornerExternalDirs);
+            const lastWired = isWired(macro.lastCorner, lastRole.cornerExternalDirs);
+            liveIsFirst = !(!firstWired && lastWired);
+            const liveCornerPos = liveIsFirst ? macro.firstCorner : macro.lastCorner;
+            const liveId = cells[idx(liveCornerPos[0], liveCornerPos[1])];
+            controlOn = isGoldId(liveId) && goldCharge(liveId) === ON;
+        }
+        v = { liveIsFirst, controlOn, activeIsFirst: controlOn ? liveIsFirst : !liveIsFirst };
         macroControlCache.set(macro.key, v);
         return v;
     }
@@ -611,7 +755,14 @@
             if (!role) return OFF;
             switch (role.kind) {
                 case 'corner': return goldCharge(id);
-                case 'end': case 'comMiddle': return grayCharge(id);
+                case 'end': case 'comMiddle':
+                    // A box mux's select faces share their cells with a pin
+                    // or with COM, and are told apart by axis (see
+                    // buildBoxMux): report nothing along the select axis, so
+                    // the select line stays an input rather than being
+                    // driven by the very node it switches.
+                    if (role.mutedAxis !== undefined && role.mutedAxis === axis) return OFF;
+                    return grayCharge(id);
                 case 'isolatedGold': return ON;
                 case 'isolatedGray': return FALLING;
                 default: return OFF; // midSpacer, invalidGold, invalidGray
@@ -691,8 +842,7 @@
         if (macroBodyCacheTick !== tickCount) { macroBodyCache.clear(); macroBodyCacheTick = tickCount; }
         let v = macroBodyCache.get(macro.key);
         if (v) return v;
-        const { controlOn, liveIsFirst } = getMacroControl(macro);
-        const activeIsFirst = controlOn ? liveIsFirst : !liveIsFirst;
+        const { activeIsFirst } = getMacroControl(macro);
         const first = macro.nodes.first, last = macro.nodes.last, com = macro.nodes.com;
         // wasActive is tracked on whichever node still has an animated gray
         // cell — a sourced cell can't hold it. Prefer COM (nextComMiddle
@@ -739,13 +889,19 @@
         if (cur === FALLING) return OFF;
         const seedOn = ([nx, ny, axis]) => contribCharge(nx, ny, axis) === ON;
         if (role.external.some(seedOn)) return ON;
+        // Same-node neighbors (a box mux's COM row is three cells; every
+        // band-mux node is a single cell, so this is empty there). Read
+        // directly rather than through contribCharge, which deliberately
+        // reports nothing along a box cell's select axis — and that axis is
+        // exactly the one the COM row's own cells sit on.
+        if (role.sibs && role.sibs.some(([nx, ny]) => grayCharge(cells[idx(nx, ny)]) === ON)) return ON;
         for (const g of role.gates) {
             if (!gateOpen(g)) continue;
             // contribCharge (not a raw isGrayId/grayCharge read) so a gate
             // that leads to a source cell (see processGoldBlob) is
             // recognized too — its id is +V/-V, not gray, but contribCharge
             // already dispatches on that correctly for every cell type.
-            if (contribCharge(g.pos[0], g.pos[1], AXIS_H) === ON) return ON;
+            if (contribCharge(g.pos[0], g.pos[1], g.axis) === ON) return ON;
         }
         return OFF;
     }
@@ -771,6 +927,16 @@
         return makeGray(charge, body.activeIsFirst);
     }
 
+    // A box mux's select-sense spacer: the stand-in for the band mux's gold
+    // control corner. It drives nothing (contribCharge reports OFF for it)
+    // and only ever reads the LIVE end's select contact, so wiring both ends
+    // leaves the dead one ignored rather than ORed in.
+    function nextBoxSel(id, role) {
+        const { liveIsFirst } = getMacroControl(role.macro);
+        const [nx, ny, axis] = liveIsFirst ? role.macro.selFirst : role.macro.selLast;
+        return makeGray(nextCharge(grayCharge(id), contribCharge(nx, ny, axis), OFF, OFF, OFF), false);
+    }
+
     function nextGray(x, y, id) {
         const role = roles[idx(x, y)];
         if (!role) return id;
@@ -778,6 +944,7 @@
         if (role.kind === 'invalidGray') return makeGray(OFF, false);
         if (role.kind === 'end') return nextEnd(x, y, id, role);
         if (role.kind === 'comMiddle') return nextComMiddle(x, y, id, role);
+        if (role.kind === 'boxSel') return nextBoxSel(id, role);
         return id;
     }
 
@@ -1455,12 +1622,21 @@
     // without their contracts getting confused.
     // Returns {ok, objects:[{cells}] in input order, unrouted}.
     function moveObjects(objectList, dx, dy, quarterTurns) {
+        // Within a mux each cell is its own node — except a box mux's COM
+        // row, whose three cells ARE one node: a wire that comes back flush
+        // against a different one of them than it left is still attached to
+        // the same thing, and must not be trimmed as a stray new contact.
+        const muxNodeKey = (x, y) => {
+            const r = roles[idx(x, y)];
+            if (r && r.macro && r.macro.kind === 'box' && r.kind === 'comMiddle') return 'm' + r.macro.key + '|com';
+            return 'm' + idx(x, y);
+        };
         const objCells = [], nodeKeys = [];
         objectList.forEach((o, oi) => {
             const isMux = o.cells.some(([x, y]) => { const r = roles[idx(x, y)]; return r && r.macro; });
             for (const [x, y] of o.cells) {
                 objCells.push([x, y]);
-                nodeKeys.push(isMux ? 'm' + idx(x, y) : 'o' + oi);
+                nodeKeys.push(isMux ? muxNodeKey(x, y) : 'o' + oi);
             }
         });
         const objSet = new Set(objCells.map(([x, y]) => idx(x, y)));
@@ -1502,12 +1678,13 @@
         const newIdxOf = new Map();
         objCells.forEach(([x, y], i) => newIdxOf.set(idx(x, y), idx(moved[i][0], moved[i][1])));
         // Moved cells that can carry a connection (for a mux, everything but
-        // the mid control spacer) — the trim step's notion of "flush against
-        // a node". Uses pre-move roles, captured before the lift below.
+        // its inert spacer — the band's mid control cell, the box's
+        // select-sense cell) — the trim step's notion of "flush against a
+        // node". Uses pre-move roles, captured before the lift below.
         const capableMoved = new Set();
         objCells.forEach(([x, y], i) => {
             const r = roles[idx(x, y)];
-            if (!r || r.kind !== 'midSpacer') capableMoved.add(idx(moved[i][0], moved[i][1]));
+            if (!r || (r.kind !== 'midSpacer' && r.kind !== 'boxSel')) capableMoved.add(idx(moved[i][0], moved[i][1]));
         });
 
         // Cells belonging to one electrical node share an id, so the shrink

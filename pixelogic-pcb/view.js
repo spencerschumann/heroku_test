@@ -13,8 +13,6 @@
     // Explicit sources: +V white with a black border/glyph, -V black with a
     // white border/glyph (each bordered in the opposite color so it reads on
     // any background).
-    const COLOR_POS_BG = '#ffffff', COLOR_POS_FG = '#000000';
-    const COLOR_NEG_BG = '#000000', COLOR_NEG_FG = '#ffffff';
     // Output LED: red, dark when off, bright (with a glow) when on.
     const COLOR_LED_OFF = '#4a0d0d', COLOR_LED_ON = '#ff2a2a';
     // Momentary switch: light "solder" gray; brighter when pressed.
@@ -270,7 +268,11 @@
             if (role && (role.kind === 'endSource' || role.kind === 'comSource')) {
                 drawMuxSourceCell(x, y, px, py, cs, role, layers);
             } else {
-                drawSource(px, py, cs, id === M.ID_POS);
+                // Same glyph a source standing in for a mux pin gets, arm
+                // stubs and all — one drawing for one thing, whether it sits
+                // inside a mux, out on its own, or flush against an LED or a
+                // mux edge, where the stub is what makes the connection read.
+                drawSourceCell(x, y, px, py, cs, id === M.ID_POS);
             }
             return;
         }
@@ -290,24 +292,6 @@
 
     // Explicit source: +V is white with a black +, -V is black with a white -,
     // each ringed in the opposite color so it stands out on any background.
-    function drawSource(px, py, cs, positive) {
-        const bg = positive ? COLOR_POS_BG : COLOR_NEG_BG;
-        const fg = positive ? COLOR_POS_FG : COLOR_NEG_FG;
-        ctx.fillStyle = bg;
-        ctx.fillRect(px, py, cs, cs);
-        const border = Math.max(1, cs * 0.1);
-        ctx.strokeStyle = fg;
-        ctx.lineWidth = border;
-        ctx.strokeRect(px + border / 2, py + border / 2, cs - border, cs - border);
-        ctx.lineWidth = Math.max(2, cs * 0.15);
-        ctx.lineCap = 'round';
-        const cx = px + cs / 2, cy = py + cs / 2, r = cs * 0.28;
-        ctx.beginPath();
-        ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
-        if (positive) { ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); }
-        ctx.stroke();
-    }
-
     // A rect with 0-4 of its corners chamfered — used to bevel only an LED
     // blob's outer (silhouette) corners, so a lone LED reads as a rounded
     // chip and a cluster reads as one pad with just its outer edge cut,
@@ -410,13 +394,12 @@
         else ctx.fillRect(px, cy - chalf, cx - px, ct);
     }
 
-    // Isolated gold/gray (a lone-blob mux-colored pixel touching no body/
-    // control of the opposite color) acts as a +V/-V source. A genuinely
-    // single pixel is drawn as the source circle glyph so it reads as a
-    // source. A multi-pixel clump reads as a "pad" instead: the circle
-    // glyph doesn't tile, so it switches immediately to a plain colored
-    // square.
-    function drawIsolatedMuxSource(x, y, px, py, cs, positive) {
+    // A source standing on its own: the explicit +V/-V cell, or a lone
+    // isolated gold/gray pixel acting as one. Substrate background, a stub
+    // toward every neighbor it actually connects to, and the circle glyph on
+    // top — the stub is what makes it read as plugged into a wire, an LED or
+    // a mux edge rather than merely abutting it.
+    function drawSourceCell(x, y, px, py, cs, positive) {
         ctx.fillStyle = COLOR_INSULATOR;
         ctx.fillRect(px, py, cs, cs);
         const cx = px + cs / 2, cy = py + cs / 2;
@@ -566,6 +549,13 @@
     }
 
     function macroLiveIsFirst(macro) {
+        if (macro.kind === 'box') {
+            // A box mux's select contact is one corner per end, and the live
+            // end is SEL/NC rather than NO — same tie-breaking, opposite
+            // meaning. See the model's buildBoxMux.
+            const wired = ([nx, ny]) => M.inBounds(nx, ny) && !M.isInsulatorId(M.getCell(nx, ny));
+            return !(!wired(macro.selFirst) && wired(macro.selLast));
+        }
         const firstRole = M.roles[M.idx(macro.firstCorner[0], macro.firstCorner[1])];
         const lastRole = M.roles[M.idx(macro.lastCorner[0], macro.lastCorner[1])];
         const firstWired = cornerIsWired(macro.firstCorner[0], macro.firstCorner[1], firstRole);
@@ -581,9 +571,15 @@
     // the model's own getMacroControl/getMacroBody.
     function macroActiveIsFirst(macro) {
         const liveIsFirst = macroLiveIsFirst(macro);
-        const liveCorner = liveIsFirst ? macro.firstCorner : macro.lastCorner;
-        const liveId = M.getCell(liveCorner[0], liveCorner[1]);
-        const controlOn = M.isGoldId(liveId) && M.goldCharge(liveId) === M.ON;
+        // Where the control charge is kept is the only thing that differs:
+        // a band mux holds it on the live gold corner, a box mux on its
+        // select spacer. Both make the live end NO, so control ON bridges it.
+        const ctlCell = macro.kind === 'box' ? macro.selCell
+            : (liveIsFirst ? macro.firstCorner : macro.lastCorner);
+        const ctlId = M.getCell(ctlCell[0], ctlCell[1]);
+        const controlOn = macro.kind === 'box'
+            ? M.isGrayId(ctlId) && M.grayCharge(ctlId) === M.ON
+            : M.isGoldId(ctlId) && M.goldCharge(ctlId) === M.ON;
         return controlOn ? liveIsFirst : !liveIsFirst;
     }
 
@@ -644,30 +640,180 @@
 
         const activeIsFirst = macroActiveIsFirst(macro);
         const along = macro.along, toward = macro.toward;
-        // Outward: away from COM along the band axis — the one direction
-        // guaranteed to be outside the macro's own footprint, so it safely
-        // identifies an actual external pin wire rather than another part
-        // of the same mux.
-        const outward = activeIsFirst ? [-along[0], -along[1]] : along;
-        const ex = macro.rowStart[0] + toward[0] + (activeIsFirst ? 0 : along[0] * 2);
-        const ey = macro.rowStart[1] + toward[1] + (activeIsFirst ? 0 : along[1] * 2);
-        const comX = macro.rowStart[0] + along[0] + toward[0];
-        const comY = macro.rowStart[1] + along[1] + toward[1];
+        const at = (i, d) => [macro.rowStart[0] + along[0] * i + toward[0] * d,
+                              macro.rowStart[1] + along[1] * i + toward[1] * d];
+        const i = activeIsFirst ? 0 : 2;
+
+        // The conducting path, pin end first, as a list of cells. For a band
+        // mux that's the active end and COM, side by side in the body row.
+        // For a box mux the pin and COM are diagonally opposite, and the
+        // trace runs straight between them — the slanted contact line a mux
+        // symbol draws, rather than an elbow that would read as routing.
+        //
+        // Outward at each end: the pin's is away from COM (along the band
+        // axis for a band mux, across it for a box), and COM's is its own
+        // exit face. Both point out of the macro's own footprint, so they
+        // identify a real external wire rather than another part of the mux.
+        const isBox = macro.kind === 'box';
+        const pinOut = isBox ? toward : (activeIsFirst ? [-along[0], -along[1]] : along);
+        const comOut = isBox ? [-toward[0], -toward[1]] : toward;
+        // The outward face of a cell, in the same fractional cell
+        // coordinates the points are drawn from: half a cell out from its
+        // center, which is exactly where an attached wire's own fill stops.
+        const face = ([cx, cy], out) => [cx + out[0] / 2, cy + out[1] / 2];
 
         // The flow line draws only for a genuinely ON path. OFF shows
         // nothing, and FALLING shows nothing either — a dimmer wire for a
         // signal that isn't carrying charge (e.g. the constant state of a
-        // -V source) read as a phantom signal rather than "off".
-        const on = bodyCellCharge(ex, ey) === M.ON || bodyCellCharge(comX, comY) === M.ON;
+        // -V source) read as a phantom signal rather than "off". Tested over
+        // the whole electrical path, including the COM cell the diagonal
+        // passes by rather than through, so it lights the tick charge
+        // arrives rather than the tick after.
+        const pinCell = at(i, 1), comCell = isBox ? at(1, 0) : at(1, 1);
+        const onCells = isBox ? [pinCell, at(i, 0), comCell] : [pinCell, comCell];
+        const on = onCells.some(([cx, cy]) => bodyCellCharge(cx, cy) === M.ON);
 
-        // The flush extension out to an attached wire only happens from a
-        // plain gray pin/COM. A sourced cell's opaque glyph (and its own
-        // arm stub) covers its side of the connection — running the flow
-        // line under it too would double-composite the translucent charge.
-        const pinFlush = M.isGrayId(M.getCell(ex, ey)) && isExternalWireAt(ex + outward[0], ey + outward[1]);
-        const comFlush = M.isGrayId(M.getCell(comX, comY)) && isExternalWireAt(comX + toward[0], comY + toward[1]);
+        // A line reaching a wire ends flush at the shared cell boundary
+        // rather than with a round cap, so the two meet exactly instead of
+        // the cap bulging over the wire's own charge fill and
+        // double-compositing the translucent color. (A sourced pin/COM is
+        // left alone: its opaque glyph and arm stub already cover that side.)
+        const wiredAt = (cell, out) => M.isGrayId(M.getCell(cell[0], cell[1])) &&
+            isExternalWireAt(cell[0] + out[0], cell[1] + out[1]);
 
-        muxIndicators.push({ ex, ey, comX, comY, toward, outward, on, pinFlush, comFlush });
+        let pts, capStart, capEnd;
+        if (isBox) {
+            // Contact to contact: the diagonal runs from the pin's own
+            // outward face to COM's, so it meets both wires at the package
+            // edge instead of stopping half a cell short of each. Drawn
+            // full-length whether or not anything is wired there, so the
+            // angle is a fixed property of the symbol rather than something
+            // that shifts as the board gets wired up.
+            pts = [face(pinCell, pinOut), face(comCell, comOut)];
+            capStart = capEnd = false;
+        } else {
+            // A band mux's line runs along the same axis as the wires it
+            // meets, so it extends from the cell center only when there is
+            // something there to meet.
+            pts = [pinCell, comCell];
+            capStart = !wiredAt(pinCell, pinOut);
+            capEnd = !wiredAt(comCell, comOut);
+            if (!capStart) pts.unshift(face(pinCell, pinOut));
+            if (!capEnd) pts.push(face(comCell, comOut));
+        }
+
+        muxIndicators.push({ pts, on, isBox, capStart, capEnd });
+    }
+
+    // ---- Box mux symbol ----
+    // A box mux has no control band to give it a shape, so instead of the
+    // per-cell squares every other macro cell draws, the whole macro is one
+    // stylized part outline: the classic mux trapezoid, wide on the NO/NC
+    // side and narrowing toward COM, with a chevron notch bitten out of the
+    // middle of the wide side (where nothing connects) — an IC-ish symbol
+    // rather than six tiles that happen to be adjacent.
+    //
+    // Built in the macro's own (u, v) frame, in CELL units: u runs 0..3
+    // along the long axis from the first end, v runs 0..2 across from the
+    // COM side to the pin side. Both short edges slant inward toward COM by
+    // the same amount — the symbol is symmetric, and which end is SEL/NO is
+    // told by the select wire being there at all. The select wire lands on
+    // that slant, so an ordinary conductor trace is carried the rest of the
+    // way in from the cell boundary to meet it (drawn under the package, so
+    // the outline stays unbroken where they meet) instead of the wire
+    // stopping in mid-air short of the edge.
+    const BOX_NOTCH_HALF = 0.42, BOX_NOTCH_DEPTH = 0.5;
+    const BOX_INSET = 0.32;
+    const BOX_LEAD_OVERSHOOT = 0.08; // tucked under the neighbor wire's own fill
+    // A neutral gray package with a light outline, rather than the band
+    // mux's substrate-brown tiles: the box mux is drawn as a part, not as
+    // pads, and the gray is what makes it read as an IC sitting on the board.
+    const COLOR_BOX_BODY = '#343434', COLOR_BOX_OUTLINE = '#9a9a9a';
+    const BOX_OUTLINE_FRAC = 0.055;
+
+    // Pin (wide) edge, first end to last with the notch at its middle, then
+    // up the last end's slant, back along the COM (narrow) edge, and down
+    // the first end's slant.
+    const BOX_SYMBOL_POINTS = [
+        [0, 2],
+        [1.5 - BOX_NOTCH_HALF, 2],
+        [1.5, 2 - BOX_NOTCH_DEPTH],
+        [1.5 + BOX_NOTCH_HALF, 2],
+        [3, 2],
+        [3 - BOX_INSET, 0],
+        [BOX_INSET, 0],
+    ];
+
+    // Queues one box mux's symbol; deduped per macro like the indicator.
+    function queueBoxSymbol(macro, layers) {
+        if (layers.queuedBoxKeys.has(macro.key)) return;
+        layers.queuedBoxKeys.add(macro.key);
+        layers.boxSymbols.push({ macro, selIsFirst: macroLiveIsFirst(macro) });
+    }
+
+    // What an ordinary cell shows as its charge — used for the select lead,
+    // which continues whatever is wired to it and so must light with it.
+    function externalCharge(x, y) {
+        const id = M.getCell(x, y);
+        if (M.isConductorId(id) || M.isXover(id)) return wireCharge(id);
+        if (id === M.ID_POS) return M.ON;
+        if (id === M.ID_NEG) return M.FALLING;
+        if (M.isSwitch(id)) return M.switchIsPressed(id) ? M.ON : M.FALLING;
+        if (M.isToggle(id)) return M.toggleIsOn(id) ? M.ON : M.FALLING;
+        if (M.isGrayId(id)) return M.grayCharge(id);
+        if (M.isGoldId(id)) return M.goldCharge(id);
+        return M.OFF;
+    }
+
+    function drawBoxSymbol(sym, cs) {
+        const macro = sym.macro, along = macro.along, toward = macro.toward;
+        // The outer corner of cell (i=0, d=0), from which u/v measure out.
+        const ox = panX + (macro.rowStart[0] + 0.5) * cs - (along[0] + toward[0]) * cs / 2;
+        const oy = panY + (macro.rowStart[1] + 0.5) * cs - (along[1] + toward[1]) * cs / 2;
+        const P = (u, v) => [ox + (along[0] * u + toward[0] * v) * cs,
+                             oy + (along[1] * u + toward[1] * v) * cs];
+        const uvRect = (u0, v0, u1, v1) => {
+            const p = new Path2D();
+            const a = P(u0, v0), b = P(u1, v0), c = P(u1, v1), d = P(u0, v1);
+            p.moveTo(a[0], a[1]); p.lineTo(b[0], b[1]); p.lineTo(c[0], c[1]); p.lineTo(d[0], d[1]);
+            p.closePath();
+            return p;
+        };
+
+        // Select lead: a plain conductor trace from the cell boundary in to
+        // the slanted edge, so the select wire runs into the part the same
+        // way every other wire runs into everything else. Drawn first —
+        // the package fill covers its inner end and the outline then draws
+        // across it — and overlapping the neighbor cell slightly, since that
+        // cell's own arm is filled later and hides the seam.
+        const sel = sym.selIsFirst ? macro.selFirst : macro.selLast;
+        if (isExternalWireAt(sel[0], sel[1])) {
+            const halfW = WIRE_THICKNESS / 2;
+            // The slant recedes as v grows, so meet it at the lead's near
+            // edge and let the package fill trim the overlap.
+            const uTip = BOX_INSET * (1 - (0.5 - halfW) / 2) + 0.02;
+            const u0 = sym.selIsFirst ? -BOX_LEAD_OVERSHOOT : 3 + BOX_LEAD_OVERSHOOT;
+            const u1 = sym.selIsFirst ? uTip : 3 - uTip;
+            ctx.fillStyle = COLOR_CONDUCTOR;
+            ctx.fill(uvRect(u0, 0.5 - halfW, u1, 0.5 + halfW));
+            const cf = chargeThicknessFrac(externalCharge(sel[0], sel[1]));
+            if (cf) {
+                ctx.fillStyle = COLOR_CHARGE;
+                ctx.fill(uvRect(u0, 0.5 - cf / 2, u1, 0.5 + cf / 2));
+            }
+        }
+
+        const pts = BOX_SYMBOL_POINTS.map(([u, v]) => P(u, v));
+        const path = new Path2D();
+        path.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) path.lineTo(pts[i][0], pts[i][1]);
+        path.closePath();
+        ctx.fillStyle = COLOR_BOX_BODY;
+        ctx.fill(path);
+        ctx.strokeStyle = COLOR_BOX_OUTLINE;
+        ctx.lineWidth = Math.max(1, cs * BOX_OUTLINE_FRAC);
+        ctx.lineJoin = 'miter';
+        ctx.stroke(path);
     }
 
     function drawMuxPixel(x, y, id, px, py, cs, layers) {
@@ -677,7 +823,7 @@
 
         if (role && (role.kind === 'isolatedGold' || role.kind === 'isolatedGray')) {
             if (role.size === 1) {
-                drawIsolatedMuxSource(x, y, px, py, cs, role.kind === 'isolatedGold');
+                drawSourceCell(x, y, px, py, cs, role.kind === 'isolatedGold');
             } else {
                 basePath.rect(px, py, cs, cs);
             }
@@ -692,6 +838,15 @@
 
         if (role.kind === 'corner') { drawMuxControlCell(px, py, cs, role.macro, role, layers); return; }
         if (role.kind === 'midSpacer') { drawMuxControlCell(px, py, cs, role.macro, null, layers); return; }
+
+        // A box mux draws as one part outline for the whole macro rather
+        // than per-cell squares, so its cells contribute nothing here — see
+        // drawBoxSymbol.
+        if (role.macro && role.macro.kind === 'box') {
+            queueBoxSymbol(role.macro, layers);
+            if (role.kind === 'end') queueMuxIndicator(role.macro, layers.muxIndicators, layers.queuedMacroKeys);
+            return;
+        }
 
         // Body (end / comMiddle): plain color (always gray — a valid body
         // cell is never gold), no per-cell charge square — see
@@ -724,45 +879,68 @@
     // stroking with round caps, which overshoot each endpoint by half the
     // line width — right into the neighboring wire's own charge fill.)
     const COLOR_MUX_BADGE = 'rgba(200, 200, 200, 0.07)';
+    // The idle (not carrying) state of a box mux's internal trace — visible
+    // enough to show which input is selected, dim enough that lighting up
+    // still reads as a change.
+    const COLOR_BOX_TRACE = 'rgba(216, 216, 216, 0.10)';
     const MUX_INDICATOR_INSET = 0.15;
     const MUX_INDICATOR_RADIUS = 0.3;
 
     function drawMuxIndicator(ind, cs) {
-        const bx0 = panX + Math.min(ind.ex, ind.comX) * cs + MUX_INDICATOR_INSET * cs;
-        const by0 = panY + Math.min(ind.ey, ind.comY) * cs + MUX_INDICATOR_INSET * cs;
-        const bw = (Math.abs(ind.comX - ind.ex) + 1) * cs - 2 * MUX_INDICATOR_INSET * cs;
-        const bh = (Math.abs(ind.comY - ind.ey) + 1) * cs - 2 * MUX_INDICATOR_INSET * cs;
-        ctx.fillStyle = COLOR_MUX_BADGE;
-        ctx.beginPath();
-        ctx.roundRect(bx0, by0, bw, bh, Math.min(MUX_INDICATOR_RADIUS * cs, bw / 2, bh / 2));
-        ctx.fill();
+        // A band mux marks its active path with a rounded-rect badge under
+        // the body's own square tiles. A box mux is a drawn part outline
+        // instead, and a badge that size swamps it — so there the same path
+        // is only ever the thin trace below, dim when idle and lit when
+        // carrying, reading as the internal connection the symbol implies.
+        if (!ind.isBox) {
+            // One rounded rect per step of the path, all in a single nonzero
+            // fill, so overlapping steps composite once rather than
+            // double-stacking the translucent wash.
+            const badge = new Path2D();
+            for (let k = 0; k + 1 < ind.pts.length; k++) {
+                const [ax, ay] = ind.pts[k], [bx, by] = ind.pts[k + 1];
+                const x0 = panX + Math.min(ax, bx) * cs + MUX_INDICATOR_INSET * cs;
+                const y0 = panY + Math.min(ay, by) * cs + MUX_INDICATOR_INSET * cs;
+                const w = (Math.abs(bx - ax) + 1) * cs - 2 * MUX_INDICATOR_INSET * cs;
+                const h = (Math.abs(by - ay) + 1) * cs - 2 * MUX_INDICATOR_INSET * cs;
+                badge.roundRect(x0, y0, w, h, Math.min(MUX_INDICATOR_RADIUS * cs, w / 2, h / 2));
+            }
+            ctx.fillStyle = COLOR_MUX_BADGE;
+            ctx.fill(badge);
+            if (!ind.on) return;
+        }
 
-        if (!ind.on) return;
         const t = cs * CHARGE_THICKNESS_ON, half = t / 2;
-        const addLeg = (path, ax, ay, bx, by) => {
-            if (ay === by) path.rect(Math.min(ax, bx), ay - half, Math.abs(bx - ax), t);
-            else path.rect(ax - half, Math.min(ay, by), t, Math.abs(by - ay));
+        // A segment of the line, at any angle: for an axis-aligned one this
+        // is exactly the rect it always was, and for a box mux's diagonal
+        // it's the same bar swung round. The normal's sign is chosen so the
+        // quad winds the same way Path2D.rect and arc do — the whole line is
+        // one nonzero fill, and a subpath wound the other way would punch a
+        // hole through the caps instead of merging with them.
+        const addLeg = (path, [ax, ay], [bx, by]) => {
+            const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+            if (len < 1e-6) return;
+            const nx = dy / len * half, ny = -dx / len * half;
+            path.moveTo(ax + nx, ay + ny); path.lineTo(bx + nx, by + ny);
+            path.lineTo(bx - nx, by - ny); path.lineTo(ax - nx, ay - ny);
+            path.closePath();
         };
-        const addCap = (path, x, y) => { path.moveTo(x + half, y); path.arc(x, y, half, 0, Math.PI * 2); };
+        const addCap = (path, [x, y]) => { path.moveTo(x + half, y); path.arc(x, y, half, 0, Math.PI * 2); };
 
-        // Pin-side leg runs from the end cell's center (extended flush to
-        // the cell edge when a wire is attached there) to the COM cell's
-        // center; a second, perpendicular leg continues to COM's own exit
-        // edge when that side is wired — an elbow, not a diagonal, matching
-        // the PCB routing language everywhere else. Interior endpoints get
-        // a cap circle (the flush ends stay square, meeting the wire's own
-        // charge fill exactly at the shared boundary); the elbow joint gets
-        // one too, rounding the turn's outer corner.
-        const ecx = panX + ind.ex * cs + cs / 2, ecy = panY + ind.ey * cs + cs / 2;
-        const ccx = panX + ind.comX * cs + cs / 2, ccy = panY + ind.comY * cs + cs / 2;
-        const sx = ind.pinFlush ? ecx + ind.outward[0] * cs / 2 : ecx;
-        const sy = ind.pinFlush ? ecy + ind.outward[1] * cs / 2 : ecy;
+        // Points are in fractional cell coordinates (see queueMuxIndicator),
+        // so an end sitting on a cell boundary is just an x.5. Every point
+        // gets a cap circle except the two ends when they meet a wire, which
+        // stay square: on a straight run the cap is inscribed and invisible,
+        // and at a turn it rounds the corner.
+        const pts = ind.pts.map(([cx, cy]) => [panX + cx * cs + cs / 2, panY + cy * cs + cs / 2]);
         const path = new Path2D();
-        addLeg(path, sx, sy, ccx, ccy);
-        if (!ind.pinFlush) addCap(path, sx, sy);
-        addCap(path, ccx, ccy);
-        if (ind.comFlush) addLeg(path, ccx, ccy, ccx + ind.toward[0] * cs / 2, ccy + ind.toward[1] * cs / 2);
-        ctx.fillStyle = COLOR_CHARGE;
+        for (let k = 0; k + 1 < pts.length; k++) addLeg(path, pts[k], pts[k + 1]);
+        for (let k = 0; k < pts.length; k++) {
+            if (k === 0 && !ind.capStart) continue;
+            if (k === pts.length - 1 && !ind.capEnd) continue;
+            addCap(path, pts[k]);
+        }
+        ctx.fillStyle = ind.on ? COLOR_CHARGE : COLOR_BOX_TRACE;
         ctx.fill(path);
     }
 
@@ -800,12 +978,17 @@
             muxIndicators: [],
             queuedMacroKeys: new Set(),
             muxSourceGlyphs: [],
+            boxSymbols: [],
+            queuedBoxKeys: new Set(),
         };
         for (let y = y0; y <= y1; y++)
             for (let x = x0; x <= x1; x++)
                 drawCell(x, y, layers);
         ctx.fillStyle = COLOR_GRAY_BODY;
         ctx.fill(layers.muxBodyPath);
+        // Box mux symbols go in with the rest of the mux bodies — under the
+        // wires, which draw over the lead the symbol reaches out to them.
+        for (const sym of layers.boxSymbols) drawBoxSymbol(sym, cs);
         ctx.fillStyle = COLOR_GOLD;
         ctx.fill(layers.muxGoldPath);
         ctx.fillStyle = COLOR_INSULATOR;
