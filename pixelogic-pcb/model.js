@@ -185,6 +185,11 @@
         if (isGoldId(id) || isGrayId(id)) {
             const role = roles[idx(x, y)];
             if (!role) return false;
+            // A box mux cell connects only where it actually has a lead —
+            // its four live faces are the four the view draws leads on, and
+            // the rest of the outline is package. Every other role is
+            // per-cell, with no face of its own to distinguish.
+            if (role.lead !== undefined) return role.lead !== null;
             return role.kind === 'corner' || role.kind === 'end' || role.kind === 'comMiddle'
                 || role.kind === 'isolatedGold' || role.kind === 'isolatedGray';
         }
@@ -380,32 +385,34 @@
     // ===== Box mux: the second mux style =====
     //
     // Six gray pixels in a 3x2 rectangle, touching no gold at all — the whole
-    // device is body, with no control band. Which pixel is which terminal is
-    // decided entirely by what is wired to it:
+    // device is body, with no control band. It is an unprogrammed part until
+    // ONE wire lands on a corner: that single wire is SELECT, and placing it
+    // fixes the whole frame, its own role included.
     //
-    //                    COM
-    //                     |
-    //              +---+---+---+
-    //       SEL ---|   |   |   |--- SEL      the COM-row corners
-    //              +---+---+---+
-    //              |   |   |   |
-    //              +-+-+---+-+-+
-    //                |         |
-    //              NO/NC     NO/NC
+    //          SEL                         SEL
+    //           |                           |
+    //         +-------------+           +-------------+
+    //         | S | COM | . |    or     | . | COM | S |     ...and the same
+    //         +-------------+           +-------------+     two with the rows
+    //         | O |  .  | C |           | C |  .  | O |     swapped: four
+    //         +-------------+           +-------------+     corners, four
+    //           |       |                 |       |         frames.
+    //          NO      NC                NC      NO
     //
-    //  - COM is the long side with a wire at its MIDDLE. That's the
-    //    discriminator precisely because a working mux has its OTHER long
-    //    side wired at the ENDS, so "which side has a wire" could never tell
-    //    the two apart. Any wire along the COM side joins COM; only the
-    //    middle one decides which side it is.
-    //  - The two end cells of the opposite long side are the switched pins.
-    //  - SEL goes on a SHORT side, at the one corner adjacent to the COM
-    //    side — one cell per end, not the whole short side. The end SEL is
-    //    wired to is NO, so select ON bridges the pin on SEL's own side and
-    //    OFF bridges the far one: the same convention as the band mux, whose
-    //    wired control corner also marks NO. Ties and nothing-wired default
-    //    to the first end, again as the band mux. The pin row's short faces
-    //    connect to nothing.
+    // A corner's SHORT-side face is the only face that can say everything at
+    // once, which is why it is the one that decides:
+    //   - the corner's own row is the COM row (COM exits its middle cell),
+    //   - the far row holds the two switched pins, at its ends,
+    //   - and the corner's end is NO, so select ON bridges the pin below it
+    //     and OFF bridges the far one — the band mux's convention, where the
+    //     wired control corner also marks NO.
+    // Four corners, four frames, no defaults and no tie-breaks: with nothing
+    // wired the part simply has no orientation yet ('boxIdle'), and is inert
+    // until it gets one. If more than one corner is wired the first in scan
+    // order wins, and the others are inert package like every other face.
+    //
+    // That leaves exactly four live faces — SEL, COM, NO, NC — which is what
+    // the view draws leads on. Every other face is package.
     //
     // The pin row's middle cell is an inert spacer that holds the sensed
     // select charge — with no gold cell to keep it in, the select would
@@ -433,50 +440,123 @@
         };
         const gridAt = (i, d) => [minX + along[0] * i + perp[0] * d, minY + along[1] * i + perp[1] * d];
 
-        const comIsNear = !(!wiredAt(gridAt(1, 0), neg(perp)) && wiredAt(gridAt(1, 1), perp));
-        const toward = comIsNear ? perp : neg(perp); // COM row -> pin row
-        const comOut = neg(toward);                  // COM's outward face
-        const pinOut = toward;                       // the pins' outward face
-        const rowStart = gridAt(0, comIsNear ? 0 : 1);
+        const rect = { x: minX, y: minY, w, h };
+        const perpOut = (d) => (d === 0 ? neg(perp) : perp); // outward from row d
+
+        // ---- What the wiring has settled so far ----
+        // A corner's short-side face is the only one that can say everything
+        // at once, so it is checked first and wins outright. Failing that, a
+        // long side's own faces still pin down the AXIS — which row is COM —
+        // even though nothing yet says which end is NO: a wire at a side's
+        // middle is COM, and a wire at a side's end is a pin, so the far row
+        // is COM. That partial answer is enough to shape the package.
+        let sel = null;
+        for (const d of [0, 1]) {
+            for (const i of [0, 2]) {
+                const out = i === 0 ? neg(along) : along;
+                if (wiredAt(gridAt(i, d), out)) { sel = { i, d, out }; break; }
+            }
+            if (sel) break;
+        }
+        let comD = sel ? sel.d : null;
+        if (comD === null) {
+            for (const d of [0, 1]) if (wiredAt(gridAt(1, d), perpOut(d))) { comD = d; break; }
+        }
+        if (comD === null) {
+            for (const d of [0, 1]) {
+                if ([0, 2].some((i) => wiredAt(gridAt(i, d), perpOut(d)))) { comD = 1 - d; break; }
+            }
+        }
+        if (comD === null) {
+            // Nothing wired at all: a blank part with no orientation yet,
+            // drawn as a plain package and electrically inert. The footprint
+            // travels with the role so the view can draw it without an
+            // orientation to hang it on.
+            const frame = { key: `box:idle:${minX},${minY}`, rect, along, rowStart: null, toward: null, leads: [] };
+            for (const [bx, by] of blob) roles[idx(bx, by)] = { kind: 'boxIdle', frame, lead: null };
+            return true;
+        }
+
+        const towardOf = (d) => (d === 0 ? perp : neg(perp)); // COM row -> pin row
+
+        if (!sel) {
+            // Oriented but not yet commissioned: COM and both pins are known
+            // — enough for the trapezoid and three of its leads — but with no
+            // select there is no NO/NC and nothing to switch, so the part
+            // stays inert until a corner is wired.
+            const t = towardOf(comD), cOut = neg(t);
+            const start = gridAt(0, comD);
+            const cellAt = (i, d) => [start[0] + along[0] * i + t[0] * d, start[1] + along[1] * i + t[1] * d];
+            const frame = {
+                key: `box:frame:${start[0]},${start[1]},${t[0]},${t[1]}`,
+                rect, along, rowStart: start, toward: t,
+                leads: [[cellAt(1, 0), cOut], [cellAt(0, 1), t], [cellAt(2, 1), t]],
+            };
+            for (let i = 0; i < 3; i++) {
+                roles[idx(...cellAt(i, 0))] = { kind: 'boxFrame', frame, lead: i === 1 ? cOut : null };
+                roles[idx(...cellAt(i, 1))] = { kind: 'boxFrame', frame, lead: i === 1 ? null : t };
+            }
+            return true;
+        }
+
+        const toward = towardOf(sel.d);                // COM row -> pin row
+        const comOut = neg(toward);                    // COM's outward face
+        const pinOut = toward;                         // the pins' outward face
+        const rowStart = gridAt(0, sel.d);
         const at = (i, d) => [rowStart[0] + along[0] * i + toward[0] * d,
                               rowStart[1] + along[1] * i + toward[1] * d];
+        const selIsFirst = sel.i === 0;
 
         const macro = {
             kind: 'box',
             key: `box:${rowStart[0]},${rowStart[1]},${along[0]},${along[1]},${toward[0]},${toward[1]}`,
-            rowStart, along, toward,
+            rowStart, along, toward, selIsFirst,
             selCell: at(1, 1),
-            // One select contact per end: the COM-row corner's outward face.
-            selFirst: neighborSpec(at(0, 0)[0], at(0, 0)[1], -along[0], -along[1]),
-            selLast: neighborSpec(at(2, 0)[0], at(2, 0)[1], along[0], along[1]),
+            selCorner: at(sel.i, 0),
+            selOut: sel.out,
+            comCell: at(1, 0),
+            pinFirst: at(0, 1), pinLast: at(2, 1),
+            comOut, pinOut, rect,
+            // The four live faces, which are exactly the leads the view draws.
+            leads: [[at(sel.i, 0), sel.out], [at(1, 0), comOut],
+                    [at(0, 1), pinOut], [at(2, 1), pinOut]],
             nodes: {
                 first: { cells: [], ext: [] },
                 com: { cells: [], ext: [] },
                 last: { cells: [], ext: [] },
             },
         };
-        // A box cell's SEL faces lie along the long axis and its contact
-        // faces across it, so the two are told apart by axis alone — which is
-        // exactly what contribCharge is handed. Muting the long axis is what
-        // keeps a select wire an INPUT: without it the pin/COM charge sitting
-        // on the same cell would drive the select line straight back out.
-        const mutedAxis = axisOf(along[0], along[1]);
-        const gateAxis = axisOf(toward[0], toward[1]);
+        // Every lead faces across the long axis (COM out one long side, the
+        // pins out the other), so that is the only axis a box cell ever
+        // reports its charge on — and only the cells that actually have one
+        // report at all. See contribCharge.
+        const reportAxis = axisOf(toward[0], toward[1]);
+        const gateAxis = reportAxis;
 
         for (let i = 0; i < 3; i++) {
             const [cx, cy] = at(i, 0);
-            const ext = [neighborSpec(cx, cy, comOut[0], comOut[1])];
+            // COM has ONE lead, at the middle of its side; the row's two end
+            // cells are package, not extra taps, so the live faces and the
+            // drawn leads are the same four things.
+            const ext = i === 1 ? [neighborSpec(cx, cy, comOut[0], comOut[1])] : [];
             macro.nodes.com.cells.push([cx, cy]);
             macro.nodes.com.ext.push(...ext);
             const sibs = [];
             if (i > 0) sibs.push(at(i - 1, 0));
             if (i < 2) sibs.push(at(i + 1, 0));
             roles[idx(cx, cy)] = {
-                kind: 'comMiddle', macro, external: ext, sibs, mutedAxis,
+                kind: 'comMiddle', macro, external: ext, sibs,
+                // Only COM's own middle cell speaks to the outside; the row's
+                // ends are package, select corner included (an input).
+                reportAxis: i === 1 ? reportAxis : null,
                 // COM's gate to a pin is the cell straight across from it;
                 // the middle of the COM row faces the inert select spacer
                 // and so has no gate at all.
-                gates: i === 1 ? [] : [{ pos: at(i, 1), endIsFirst: i === 0, axis: gateAxis }],
+                gates: i === 1 ? [] : [{ pos: at(i, 1), endIsFirst: i === 0, axis: gateAxis, direct: true }],
+                // Which of this cell's own faces carries a lead, for the view
+                // and for cellConnects: the COM lead on the middle, the SEL
+                // lead on the chosen corner, nothing on the other end.
+                lead: i === 1 ? comOut : (i === sel.i ? sel.out : null),
             };
         }
         for (const i of [0, 2]) {
@@ -486,11 +566,12 @@
             node.cells.push([px, py]);
             node.ext.push(...ext);
             roles[idx(px, py)] = {
-                kind: 'end', macro, isFirst: i === 0, external: ext, sibs: [], mutedAxis,
-                gates: [{ pos: at(i, 0), endIsFirst: i === 0, axis: gateAxis }],
+                kind: 'end', macro, isFirst: i === 0, external: ext, sibs: [], reportAxis,
+                gates: [{ pos: at(i, 0), endIsFirst: i === 0, axis: gateAxis, direct: true }],
+                lead: pinOut,
             };
         }
-        roles[idx(macro.selCell[0], macro.selCell[1])] = { kind: 'boxSel', macro };
+        roles[idx(macro.selCell[0], macro.selCell[1])] = { kind: 'boxSel', macro, lead: null };
         return true;
     }
 
@@ -697,13 +778,6 @@
         return false;
     }
 
-    // Whether a neighbor spec holds something (anything) — the box mux's
-    // form of isWired, over an absolute position rather than a cell's own
-    // directions, since its select contact is on a specific corner.
-    function specWired([nx, ny]) {
-        return inBounds(nx, ny) && cells[idx(nx, ny)] !== ID_INSULATOR_PLAIN;
-    }
-
     // liveIsFirst: which end the drawn control wiring points at — the NO end
     // in both mux styles, so control ON bridges it and OFF bridges the other
     // (NC). controlOn: that control's own stored charge, one tick behind its
@@ -717,7 +791,9 @@
         if (v) return v;
         let liveIsFirst, controlOn;
         if (macro.kind === 'box') {
-            liveIsFirst = !(!specWired(macro.selFirst) && specWired(macro.selLast));
+            // Which end is live isn't re-derived from wiring here: the select
+            // corner IS the frame (see buildBoxMux), so it's already decided.
+            liveIsFirst = macro.selIsFirst;
             const selId = cells[idx(macro.selCell[0], macro.selCell[1])];
             controlOn = isGrayId(selId) && grayCharge(selId) === ON;
         } else {
@@ -756,16 +832,21 @@
             switch (role.kind) {
                 case 'corner': return goldCharge(id);
                 case 'end': case 'comMiddle':
-                    // A box mux's select faces share their cells with a pin
-                    // or with COM, and are told apart by axis (see
-                    // buildBoxMux): report nothing along the select axis, so
-                    // the select line stays an input rather than being
-                    // driven by the very node it switches.
-                    if (role.mutedAxis !== undefined && role.mutedAxis === axis) return OFF;
+                    // A box mux cell reports only on the axis its own lead
+                    // faces, and a cell with no lead reports nothing at all:
+                    // the four leads are the only way in or out. Without
+                    // this a wire laid against the package's plain side
+                    // would read COM's charge straight through the plastic,
+                    // and the select corner — an input — would drive its own
+                    // select line. (A band mux cell has no `reportAxis` and
+                    // is direction-agnostic, as it always was.)
+                    if (role.reportAxis !== undefined) {
+                        return role.reportAxis === axis ? grayCharge(id) : OFF;
+                    }
                     return grayCharge(id);
                 case 'isolatedGold': return ON;
                 case 'isolatedGray': return FALLING;
-                default: return OFF; // midSpacer, invalidGold, invalidGray
+                default: return OFF; // midSpacer, invalidGold/Gray, boxIdle/boxFrame
             }
         }
         return OFF;
@@ -897,11 +978,16 @@
         if (role.sibs && role.sibs.some(([nx, ny]) => grayCharge(cells[idx(nx, ny)]) === ON)) return ON;
         for (const g of role.gates) {
             if (!gateOpen(g)) continue;
-            // contribCharge (not a raw isGrayId/grayCharge read) so a gate
+            // Normally contribCharge (not a raw grayCharge read) so a gate
             // that leads to a source cell (see processGoldBlob) is
             // recognized too — its id is +V/-V, not gray, but contribCharge
-            // already dispatches on that correctly for every cell type.
-            if (contribCharge(g.pos[0], g.pos[1], g.axis) === ON) return ON;
+            // already dispatches on that correctly for every cell type. A
+            // box mux's gates are the exception: both sides are always plain
+            // body, and its cells deliberately report nothing to the outside
+            // except through a lead, so the gate reads across directly.
+            const gc = g.direct ? grayCharge(cells[idx(g.pos[0], g.pos[1])])
+                                : contribCharge(g.pos[0], g.pos[1], g.axis);
+            if (gc === ON) return ON;
         }
         return OFF;
     }
@@ -932,16 +1018,18 @@
     // and only ever reads the LIVE end's select contact, so wiring both ends
     // leaves the dead one ignored rather than ORed in.
     function nextBoxSel(id, role) {
-        const { liveIsFirst } = getMacroControl(role.macro);
-        const [nx, ny, axis] = liveIsFirst ? role.macro.selFirst : role.macro.selLast;
-        return makeGray(nextCharge(grayCharge(id), contribCharge(nx, ny, axis), OFF, OFF, OFF), false);
+        const m = role.macro;
+        const [nx, ny] = [m.selCorner[0] + m.selOut[0], m.selCorner[1] + m.selOut[1]];
+        return makeGray(nextCharge(grayCharge(id),
+            contribCharge(nx, ny, axisOf(m.selOut[0], m.selOut[1])), OFF, OFF, OFF), false);
     }
 
     function nextGray(x, y, id) {
         const role = roles[idx(x, y)];
         if (!role) return id;
         if (role.kind === 'isolatedGray') return id; // fixed -V source, not simulated
-        if (role.kind === 'invalidGray') return makeGray(OFF, false);
+        if (role.kind === 'invalidGray' || role.kind === 'boxIdle' || role.kind === 'boxFrame')
+            return makeGray(OFF, false); // inert: no orientation, or no select yet
         if (role.kind === 'end') return nextEnd(x, y, id, role);
         if (role.kind === 'comMiddle') return nextComMiddle(x, y, id, role);
         if (role.kind === 'boxSel') return nextBoxSel(id, role);
