@@ -24,7 +24,7 @@
     // for the gold (+) circle (reads as a groove cut into the board, rather
     // than blending into or brightening the background), a dimmer silver gray
     // for the black (-) circle.
-    const COLOR_ISOLATED_POS_RING = '#032900', COLOR_ISOLATED_NEG_RING = '#6e747a';
+    const COLOR_ISOLATED_POS_RING = '#032900', COLOR_ISOLATED_NEG_RING = '#8c949c';
     // Charge is shown uniformly across conductors, mux pixels and crossovers
     // as a faint (25% opacity) light-grey box: full-size for ON, slightly
     // smaller for FALLING, nothing for OFF.
@@ -632,13 +632,16 @@
     // once after the whole grid pass in drawGrid, since it reaches into a
     // neighboring cell that may not have been drawn yet in raster order.
     function queueMuxIndicator(macro, muxIndicators, queuedMacroKeys) {
+        // disabling for now
+        return;
+
         if (queuedMacroKeys.has(macro.key)) return;
         queuedMacroKeys.add(macro.key);
 
         const activeIsFirst = macroActiveIsFirst(macro);
         const along = macro.along, toward = macro.toward;
         const at = (i, d) => [macro.rowStart[0] + along[0] * i + toward[0] * d,
-                              macro.rowStart[1] + along[1] * i + toward[1] * d];
+        macro.rowStart[1] + along[1] * i + toward[1] * d];
         const i = activeIsFirst ? 0 : 2;
 
         // The conducting path, pin end first, as a list of cells. For a band
@@ -690,7 +693,7 @@
             // there out it's the lead's job, and the line would otherwise
             // tint the silver.
             const edge = ([cx, cy], out) => [cx + out[0] * (0.5 - BOX_PKG_INSET),
-                                             cy + out[1] * (0.5 - BOX_PKG_INSET)];
+            cy + out[1] * (0.5 - BOX_PKG_INSET)];
             pts = [edge(pinCell, pinOut), edge(comCell, comOut)];
             capStart = capEnd = false;
         } else {
@@ -721,7 +724,7 @@
     // are now known — COM and both pins. The first wire to land on a corner
     // is SELECT and fixes the rest, adding the fourth lead and the
     // silkscreen.
-    const BOX_PKG_INSET = 0.17;   // package edge, in from the footprint
+    const BOX_PKG_INSET = 0.15;   // package edge, in from the footprint
     const BOX_PKG_RADIUS = 0.24;
     // Once the axis is known the package tapers toward COM — the mux's own
     // trapezoid, but softened into something that still reads as a part:
@@ -730,7 +733,7 @@
     const BOX_TAPER = 0.2;
     const BOX_NOTCH_HALF = 0.34, BOX_NOTCH_DEPTH = 0.16, BOX_NOTCH_RADIUS = 0.16;
     const BOX_LEAD_HALF = WIRE_THICKNESS / 2;  // a lead is a wire wide, so they line up
-    const BOX_LEAD_TUCK = 0.1;    // how far the lead runs under the package
+    const BOX_LEAD_TUCK = 0.2;    // how far the lead runs under the package
     const COLOR_BOX_BODY = '#343434', COLOR_BOX_OUTLINE = '#8e8e8e';
     const COLOR_BOX_LEAD = '#c3c8ce';
     const COLOR_BOX_SILK = 'rgba(235, 235, 235, 0.42)';
@@ -781,7 +784,7 @@
         const ox = panX + (frame.rowStart[0] + 0.5) * cs - (along[0] + toward[0]) * cs / 2;
         const oy = panY + (frame.rowStart[1] + 0.5) * cs - (along[1] + toward[1]) * cs / 2;
         const P = (u, v) => [ox + (along[0] * u + toward[0] * v) * cs,
-                             oy + (along[1] * u + toward[1] * v) * cs];
+        oy + (along[1] * u + toward[1] * v) * cs];
         const near = I, far = 2 - I, lo = I + BOX_TAPER, hi = 3 - I - BOX_TAPER;
         const pts = [
             [lo, near], [hi, near],                          // COM (narrow) edge
