@@ -11,9 +11,18 @@
 // versions. Bump CACHE_VERSION whenever you want to guarantee a clean sweep
 // of old cached assets (network-first already keeps content fresh online, so
 // this is mostly housekeeping).
+//
+// BUILD is stamped by scripts/publish.sh with the commit being published, and
+// exists purely so this file is byte-different on every publish. A browser
+// decides there is an update by byte-comparing sw.js, so a worker that never
+// changes means `updatefound` never fires and the app's "New version
+// available" toast (see pwa.js) can never appear — which is exactly what
+// happened while the app itself changed underneath an unchanged worker. Do
+// not remove it because it looks unused.
 
 const CACHE_VERSION = 'v5';
-const CACHE_NAME = `pixelogic-pcb-${CACHE_VERSION}`;
+const BUILD = '50f6d55';
+const CACHE_NAME = `pixelogic-pcb-${CACHE_VERSION}-${BUILD}`;
 
 const ASSETS = [
     './',
@@ -58,7 +67,13 @@ self.addEventListener('fetch', (event) => {
 
     event.respondWith((async () => {
         try {
-            const fresh = await fetch(req);
+            // 'no-store' keeps the HTTP cache out of the way. Without it the
+            // network-first fetch can be answered from the browser's own
+            // cache — GitHub Pages serves these files with a max-age — so
+            // "tried the network" would quietly mean "read a stale copy".
+            // Offline still works: this throws, and the catch serves the
+            // Cache Storage copy below.
+            const fresh = await fetch(req, { cache: 'no-store' });
             // Cache a copy of every good response so offline has the latest.
             if (fresh && fresh.status === 200 && fresh.type === 'basic') {
                 const cache = await caches.open(CACHE_NAME);

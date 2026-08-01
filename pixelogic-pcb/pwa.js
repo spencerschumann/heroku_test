@@ -44,6 +44,7 @@
     // also fires controllerchange (the worker calling clients.claim() takes
     // control for the first time) — reloading there would be a pointless
     // refresh of already-current code, so it's ignored.
+    const UPDATE_CHECK_INTERVAL = 60 * 1000;
     const hadController = !!navigator.serviceWorker.controller;
     let reloading = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -78,6 +79,21 @@
                     offerUpdate(installing);
                 }
             });
+        });
+
+        // Installed, an app is resumed far more often than it is navigated:
+        // tapping the home-screen icon brings the existing document back
+        // rather than loading the page again, so registering on `load` may
+        // be the last update check for days. Ask again whenever the app
+        // comes back to the foreground — throttled, since a phone fires this
+        // on every app switch — so a version published while it sat in the
+        // background is noticed on the next look at it.
+        let lastCheck = Date.now();
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (Date.now() - lastCheck < UPDATE_CHECK_INTERVAL) return;
+            lastCheck = Date.now();
+            reg.update().catch(() => { });
         });
     });
 
