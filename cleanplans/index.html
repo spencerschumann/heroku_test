@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CleanPlans</title>
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Every asset below is referenced RELATIVE to this document, so the app
+       runs unchanged from the dev server, from `dist/` copied to a web root,
+       and from `dist/` copied into a subdirectory of one.  An absolute "/..."
+       here would pin the whole app to the domain root. -->
+
+  <!-- PDF.js — vendored from npm into ./vendor/ (see vendor.ts) -->
+  <script type="module">
+    import * as pdfjsLib from "./vendor/pdf.min.mjs";
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("vendor/pdf.worker.min.mjs", document.baseURI).href;
+    window.pdfjsLib = pdfjsLib;
+  </script>
+
+  <!-- ONNX Runtime Web — vendored from npm into ./vendor/.
+       wasmPaths points ORT at the vendored wasm backends it fetches at runtime. -->
+  <script src="vendor/ort.min.js"></script>
+  <script>
+    if (window.ort) ort.env.wasm.wasmPaths = new URL("vendor/", document.baseURI).href;
+  </script>
+
+  <!-- If either vendored dependency failed to load, say so plainly.  Without
+       this the app runs on into "ReferenceError: pdfjsLib is not defined" the
+       moment a PDF is opened, which says nothing about the actual cause. -->
+  <script>
+    window.addEventListener("load", () => {
+      const missing = [];
+      if (!window.pdfjsLib) missing.push("pdf.js");
+      if (!window.ort) missing.push("onnxruntime-web");
+      if (missing.length === 0) return;
+      const msg =
+        `Missing vendored dependencies: ${missing.join(", ")}. ` +
+        "Run `npm install` in cleanplans-web/ (or `deno run -A vendor.ts`), then reload.";
+      console.error(msg);
+      const el = document.createElement("div");
+      el.style.cssText =
+        "position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fff;" +
+        "padding:10px 16px;font:13px/1.5 system-ui,sans-serif";
+      el.textContent = msg;
+      document.body.prepend(el);
+    });
+  </script>
+</head>
+
+<body>
+  <!-- ================================================================== -->
+  <!-- Top Navigation Bar                                                  -->
+  <!-- ================================================================== -->
+  <nav class="top-nav">
+    <div class="nav-brand">CleanPlans</div>
+    <div class="nav-status" id="statusText">Ready</div>
+  </nav>
+
+  <div class="main-content">
+    <!-- ================================================================ -->
+    <!-- Upload Screen                                                     -->
+    <!-- ================================================================ -->
+    <div class="screen active" id="uploadScreen">
+      <div class="upload-panel">
+        <div class="upload-area">
+          <h1>CleanPlans</h1>
+          <p>Drop a PDF file here or click to browse</p>
+          <div class="upload-actions">
+            <button id="uploadBtn" class="primary-btn">Choose PDF</button>
+            <button id="clearAllBtn" class="danger-btn">Clear All</button>
+          </div>
+          <input type="file" id="fileInput" accept="application/pdf" hidden>
+        </div>
+        <div class="file-list" id="fileList">
+          <div class="file-list-empty">No saved files</div>
+        </div>
+      </div>
+    </div>
+
+
+
+    <!-- ================================================================ -->
+    <!-- Viewer Screen                                                     -->
+    <!-- ================================================================ -->
+    <div class="screen" id="viewerScreen">
+      <div class="viewer-layout">
+        <!-- Sidebar -->
+        <div class="viewer-sidebar">
+          <button id="backToPagesBtn" class="back-btn">Back</button>
+
+          <div class="sidebar-section">
+            <div class="viewer-page-name" id="viewerPageName"></div>
+          </div>
+
+          <div class="sidebar-section" id="viewZoomSection">
+            <div class="zoom-controls">
+              <span id="viewerZoomLevel">100%</span>
+              <span class="dim-separator" id="cursorPosSep" style="display:none">·</span>
+              <span id="viewerCursorPos"></span>
+            </div>
+          </div>
+
+          <!-- ============================================================ -->
+          <!-- Phase 1 — prepare the raster                                 -->
+          <!--                                                              -->
+          <!-- Each step collapses to a one-line summary once it has been   -->
+          <!-- applied; clicking the summary reopens its controls.  Steps   -->
+          <!-- are managed by ui/steps.ts.                                  -->
+          <!-- ============================================================ -->
+          <div class="sidebar-section phase" id="processSection">
+            <div class="phase-title">Prepare</div>
+
+            <div class="step" id="stepPages">
+              <button class="step-head" type="button">
+                <span class="step-name">Pages</span>
+                <span class="step-value" id="stepPagesValue">—</span>
+              </button>
+              <div class="step-body">
+                <button id="selectPagesBtn" class="primary-btn">Choose pages…</button>
+              </div>
+            </div>
+
+            <div class="step" id="stepDenoise">
+              <button class="step-head" type="button">
+                <span class="step-name">Denoise</span>
+                <span class="step-value" id="stepDenoiseValue">—</span>
+              </button>
+              <div class="step-body">
+                <button id="denoiseBtn" class="primary-btn">Denoise</button>
+                <div class="progress-bar-container">
+                  <div class="progress-bar" id="denoiseProgress"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="step" id="stepCrop">
+              <button class="step-head" type="button">
+                <span class="step-name">Crop</span>
+                <span class="step-value" id="stepCropValue">—</span>
+              </button>
+              <div class="step-body">
+                <button id="cropBtn" class="primary-btn">Set crop…</button>
+              </div>
+            </div>
+
+            <div class="step" id="stepPalette">
+              <button class="step-head" type="button">
+                <span class="step-name">Palette</span>
+                <span class="step-value" id="stepPaletteValue">—</span>
+              </button>
+              <div class="step-body">
+                <div class="process-buttons">
+                  <button id="viewerExtractPaletteBtn" class="primary-btn">Extract</button>
+                  <button id="applyPaletteBtn" class="primary-btn">Apply</button>
+                </div>
+                <div class="progress-bar-container" style="display:none">
+                  <div class="progress-bar palette-progress-bar"></div>
+                </div>
+                <div class="palette-header" id="paletteHeader" style="display:none">
+                  <div class="palette-header-actions">
+                    <button class="palette-tool-btn" id="paletteEditBtn" title="Edit palette">Edit</button>
+                    <button class="palette-tool-btn" id="paletteResetBtn" title="Reset palette">Reset</button>
+                  </div>
+                </div>
+                <div class="palette-list" id="paletteList"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============================================================ -->
+          <!-- Phase 2 — vectorize                                          -->
+          <!-- ============================================================ -->
+          <div class="sidebar-section phase" id="vectorSection">
+            <div class="phase-title">Vectorize</div>
+            <button id="vectorizeBtn" class="primary-btn wide-btn">Vectorize</button>
+
+            <div id="fittedOverlayRow" style="display:none">
+              <label class="view-radio-item toggle-item">
+                <input type="checkbox" id="showFittedCurves" checked>
+                <span>Show fitted curves</span>
+              </label>
+            </div>
+
+            <div class="view-section-label">Background</div>
+            <div class="view-radio-list" id="viewRadioList">
+              <label class="view-radio-item">
+                <input type="radio" name="viewLayer" value="raw">
+                <span>Raw scan</span>
+              </label>
+              <label class="view-radio-item">
+                <input type="radio" name="viewLayer" value="denoised" checked>
+                <span>Denoised</span>
+              </label>
+              <div id="layerRadioEntries"></div>
+            </div>
+          </div>
+
+          <!-- ============================================================ -->
+          <!-- Export                                                       -->
+          <!-- ============================================================ -->
+          <div class="sidebar-section phase" id="exportSection">
+            <div class="phase-title">Export</div>
+            <div class="export-row">
+              <span class="export-label">Vectors</span>
+              <button id="exportSvgBtn" class="primary-btn" disabled>SVG</button>
+              <button id="exportDxfBtn" class="primary-btn" disabled>DXF</button>
+            </div>
+            <div class="export-note">One file per page — lines, arcs, circles. DXF is in mm.</div>
+            <div class="export-row">
+              <span class="export-label">Clean page</span>
+              <button id="exportCleanPngBtn" class="primary-btn">PNG</button>
+              <button id="exportCleanPdfBtn" class="primary-btn">PDF</button>
+            </div>
+            <div class="export-note">
+              Lossless denoised + cropped + palettized raster. PNG per page, PDF all pages.
+              This is the file to share when reporting a bad area.
+            </div>
+          </div>
+
+          <!-- Crop mode controls (replace the phases while cropping) -->
+          <div class="sidebar-section" id="cropModeSection" style="display:none">
+            <div class="phase-title">Crop</div>
+            <div class="process-buttons">
+              <button id="doneCroppingBtn" class="primary-btn">Done</button>
+              <button id="autoCropBtn" class="primary-btn">Auto</button>
+            </div>
+            <div class="crop-target-size" style="margin-top:10px">
+              <div style="font-size:11px;color:#aaa;margin-bottom:4px">Target size (inches)</div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="cropTargetWidth" value="30" min="1" max="100" step="0.5"
+                  style="width:60px;padding:3px 6px;background:#222;color:#ddd;border:1px solid #444;border-radius:4px;font-size:12px">
+                <span style="color:#888;font-size:12px">&times;</span>
+                <input type="number" id="cropTargetHeight" value="20" min="1" max="100" step="0.5"
+                  style="width:60px;padding:3px 6px;background:#222;color:#ddd;border:1px solid #444;border-radius:4px;font-size:12px">
+              </div>
+            </div>
+            <label class="crop-lock-label" style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#aaa;cursor:pointer">
+              <input type="checkbox" id="cropLockCheckbox" checked>
+              Lock same crop to all pages
+            </label>
+            <div id="cropSizeDisplay" style="margin-top:8px;font-size:11px;color:#888;line-height:1.5"></div>
+          </div>
+
+          <div class="viewer-status" id="viewerStatus"></div>
+        </div>
+
+        <!-- Page picker panel (step 1 of pipeline — shown instead of canvas) -->
+        <div class="viewer-page-picker" id="viewerPagePicker">
+          <div class="page-grid" id="pageGrid"></div>
+          <div class="page-actions" id="pageActions">
+            <span id="pageSelectionInfo">0 pages selected</span>
+            <button id="continueToViewBtn" class="primary-btn" disabled>Continue →</button>
+          </div>
+          <div class="progress-bar-container" style="display:none;margin:4px 16px 0">
+            <div class="progress-bar palette-progress-bar"></div>
+          </div>
+          <div class="page-status" id="pageStatusText">Ready</div>
+        </div>
+
+        <!-- Multi-page GPU viewer -->
+        <div class="viewer-container" id="viewerContainer">
+          <canvas id="viewerCanvas"></canvas>
+          <canvas id="graphOverlayCanvas"></canvas>
+          <canvas id="cropOverlayCanvas"></canvas>
+          <div class="minimap-container" id="minimapContainer" style="display:none">
+            <canvas id="minimapCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- Palette Editor Modal                                                -->
+  <!-- ================================================================== -->
+  <div class="palette-modal-overlay" id="paletteModal">
+    <div class="palette-modal-content">
+      <div class="palette-modal-header">
+        <h3>Edit Palette</h3>
+        <div class="palette-modal-header-actions">
+          <button class="palette-tool-btn" id="modalAddInput" title="Add input color">+ Input</button>
+          <button class="palette-tool-btn" id="modalAddOutput" title="Add output color">+ Output</button>
+          <button class="palette-modal-close" id="paletteModalClose">&times;</button>
+        </div>
+      </div>
+      <div class="palette-modal-hint" id="modalHint">
+        Click an input, then click a different bin header to reassign it.
+      </div>
+      <div class="palette-modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script type="module" src="bundle.js"></script>
+</body>
+</html>

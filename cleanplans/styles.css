@@ -1,0 +1,1258 @@
+/* ================================================================== */
+/* Reset & Base                                                        */
+/* ================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  background: #1a1a1a;
+  color: #e0e0e0;
+  overflow: hidden;
+}
+
+/* ================================================================== */
+/* Top Nav                                                              */
+/* ================================================================== */
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 1rem;
+  background: #222;
+  border-bottom: 1px solid #333;
+  font-size: 0.85rem;
+}
+
+.nav-brand {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #fff;
+}
+
+.nav-status {
+  color: #888;
+  font-size: 0.8rem;
+}
+
+/* ================================================================== */
+/* Main Content & Screens                                              */
+/* ================================================================== */
+
+.main-content {
+  height: calc(100% - 40px);
+  position: relative;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: none;
+  overflow: hidden;
+}
+
+.screen.active {
+  display: flex;
+}
+
+/* ================================================================== */
+/* Upload Screen                                                        */
+/* ================================================================== */
+
+#uploadScreen {
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-panel {
+  display: flex;
+  flex-direction: column;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  gap: 1rem;
+}
+
+.upload-area {
+  text-align: center;
+  padding: 2rem;
+  border: 2px dashed #444;
+  border-radius: 12px;
+  transition: border-color 0.2s;
+}
+
+.upload-area h1 {
+  font-size: 1.8rem;
+  margin-bottom: 0.5rem;
+  color: #fff;
+}
+
+.upload-area p {
+  color: #888;
+  margin-bottom: 1.5rem;
+}
+
+.upload-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+#uploadScreen.drag-over .upload-area {
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.05);
+}
+
+/* ================================================================== */
+/* File List                                                            */
+/* ================================================================== */
+
+.file-list {
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #222;
+  overflow-y: auto;
+  max-height: 40vh;
+}
+
+.file-list-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: #555;
+  font-size: 0.85rem;
+}
+
+.file-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  border-bottom: 1px solid #2a2a2a;
+  transition: background 0.12s;
+}
+
+.file-list-item:last-child {
+  border-bottom: none;
+}
+
+.file-list-item:hover {
+  background: #2a2a2a;
+}
+
+.file-list-thumb {
+  width: 32px;
+  height: 40px;
+  object-fit: contain;
+  border: 1px solid #444;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.file-list-name {
+  flex: 1;
+  font-size: 0.85rem;
+  color: #ccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-list-date {
+  font-size: 0.7rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.file-list-delete {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+
+.file-list-delete:hover {
+  color: #e44;
+}
+
+.danger-btn {
+  padding: 0.5rem 1rem;
+  background: #333;
+  color: #c66;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.danger-btn:hover {
+  background: #3a2222;
+  border-color: #c66;
+}
+
+/* ================================================================== */
+/* Buttons                                                              */
+/* ================================================================== */
+
+.primary-btn {
+  padding: 0.5rem 1.5rem;
+  background: #2a6bcf;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.primary-btn:hover {
+  background: #3578df;
+}
+
+.primary-btn:disabled {
+  background: #444;
+  color: #777;
+  cursor: not-allowed;
+}
+
+.secondary-btn {
+  padding: 0.4rem 1rem;
+  background: #333;
+  color: #ccc;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.secondary-btn:hover {
+  background: #444;
+  color: #fff;
+}
+
+.back-btn {
+  padding: 0.35rem 0.75rem;
+  background: #333;
+  color: #ccc;
+  border: 1px solid #444;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.back-btn:hover {
+  background: #444;
+}
+
+/* ================================================================== */
+/* Page Picker Panel (embedded viewer step)                            */
+/* ================================================================== */
+
+/* Hidden by default; shown when viewerScreen has .page-picker-active */
+.viewer-page-picker {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: #1a1a1a;
+}
+
+/* Activate page picker: show grid, hide canvas + canvas-only sidebar sections */
+#viewerScreen.page-picker-active .viewer-page-picker  { display: flex; }
+#viewerScreen.page-picker-active .viewer-container     { display: none !important; }
+#viewerScreen.page-picker-active .minimap-container    { display: none !important; }
+#viewerScreen.page-picker-active #viewZoomSection      { display: none; }
+#viewerScreen.page-picker-active #layerSection         { display: none; }
+#viewerScreen.page-picker-active #processSection       { display: none; }
+#viewerScreen.page-picker-active #cropModeSection      { display: none !important; }
+#viewerScreen.page-picker-active #paletteSection       { display: none; }
+
+/* Pipeline step navigation button */
+.pipeline-step-btn {
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  background: #2a2a2a;
+  color: #aaa;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.pipeline-step-btn:hover {
+  background: #363636;
+  color: #ddd;
+  border-color: #555;
+}
+
+/* Highlighted when the user is currently on that step */
+.pipeline-step-btn.current-step {
+  background: #1a3a5a;
+  color: #7bbfff;
+  border-color: #3a7abf;
+  cursor: default;
+}
+
+.page-grid {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 1rem;
+  overflow-y: auto;
+  align-content: flex-start;
+}
+
+.page-thumb-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0.5rem;
+  transition: background 0.15s, outline-color 0.15s;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+.page-thumb-container {
+  position: relative;
+}
+
+.page-thumb-wrapper:hover {
+  background: #2a2a2a;
+}
+
+.page-thumb-wrapper.selected {
+  outline-color: #4a9eff;
+  background: #1a2a3a;
+}
+
+.page-thumb {
+  border: 1px solid #444;
+  border-radius: 2px;
+  display: block;
+}
+
+.page-thumb-placeholder {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 2px;
+}
+
+/* Label row: checkbox + page name, above thumbnail */
+.page-label-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+}
+
+.page-thumb-label {
+  font-size: 0.7rem;
+  color: #999;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Selection checkbox — inline in label row */
+.page-check {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  background: #333;
+  border: 1.5px solid #666;
+  border-radius: 3px;
+  color: transparent;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.page-check:hover {
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.2);
+}
+
+.page-thumb-wrapper.selected .page-check {
+  background: #4a9eff;
+  border-color: #4a9eff;
+  color: #fff;
+}
+
+/* Denoised badge overlay */
+.page-denoised-badge {
+  display: none;
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  font-size: 0.6rem;
+  background: #2a6a2a;
+  color: #8f8;
+  padding: 1px 5px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.page-thumb-wrapper.denoised .page-denoised-badge {
+  display: block;
+}
+
+/* Page actions bar */
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: #222;
+  border-top: 1px solid #333;
+  font-size: 0.8rem;
+  color: #999;
+}
+
+.page-status {
+  padding: 0.5rem 1rem;
+  background: #222;
+  border-top: 1px solid #333;
+  font-size: 0.8rem;
+  color: #888;
+}
+
+/* ================================================================== */
+/* Viewer Screen                                                        */
+/* ================================================================== */
+
+.viewer-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.viewer-sidebar {
+  width: 240px;
+  min-width: 240px;
+  padding: 0.75rem;
+  background: #222;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sidebar-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: #666;
+  letter-spacing: 0.05em;
+}
+
+.viewer-page-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #ddd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zoom-controls {
+  font-size: 0.85rem;
+  color: #aaa;
+}
+
+.dim-separator {
+  margin: 0 0.25rem;
+  color: #555;
+}
+
+/* ================================================================== */
+/* Sidebar phases + collapsing prepare steps                            */
+/* ================================================================== */
+
+.phase {
+  border-top: 1px solid #303030;
+  padding-top: 0.6rem;
+}
+
+.phase-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: #7a7a7a;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+}
+
+/* A prepare step: header always visible, body only while open. */
+.step {
+  display: flex;
+  flex-direction: column;
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  color: #aaa;
+  cursor: default;
+}
+
+/* Only a completed step is clickable — a pending one is already open. */
+.step[data-state="done"] > .step-head {
+  cursor: pointer;
+}
+
+.step[data-state="done"] > .step-head:hover {
+  background: #2a2a2a;
+}
+
+.step-name {
+  flex-shrink: 0;
+}
+
+.step-value {
+  color: #e0e0e0;
+  font-size: 0.75rem;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A completed step is marked done and its value carries the detail. */
+.step[data-state="done"] > .step-head > .step-name::before {
+  content: "\2713\00a0";
+  color: #4a9d5f;
+}
+
+.step[data-state="pending"] > .step-head > .step-value {
+  color: #666;
+}
+
+.step > .step-body {
+  display: none;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.15rem 0.4rem 0.45rem;
+}
+
+.step.open > .step-body {
+  display: flex;
+}
+
+.wide-btn {
+  width: 100%;
+}
+
+/* A checkbox row borrows the radio row's shape but not its "selected" fill —
+   in this list blue means "this is the layer you are looking at", and the
+   overlay toggle is not one of those choices.  Doubled class to outrank
+   `.view-radio-item:has(input:checked)`, which is declared later. */
+.view-radio-item.toggle-item:has(input:checked) {
+  background: none;
+  color: #e0e0e0;
+}
+
+.toggle-item input[type="checkbox"] {
+  accent-color: #2a6bcf;
+  flex-shrink: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.export-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.export-row .export-label {
+  flex: 1;
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.export-row .primary-btn {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+}
+
+.export-note {
+  font-size: 10px;
+  line-height: 1.45;
+  color: #6d6d6d;
+  margin: 0.1rem 0 0.35rem;
+}
+
+/* ================================================================== */
+/* Layer Buttons                                                        */
+/* ================================================================== */
+
+.process-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.process-buttons .primary-btn {
+  flex: 1;
+  padding: 0.4rem 0;
+  font-size: 0.8rem;
+}
+
+.auto-crop-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.auto-crop-buttons .secondary-btn {
+  flex: 1;
+  font-size: 0.75rem;
+  padding: 0.3rem 0;
+}
+
+.layer-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.layer-btn {
+  flex: 1;
+  padding: 0.35rem 0;
+  border: 1px solid #444;
+  background: #2a2a2a;
+  color: #aaa;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.layer-btn.active {
+  background: #2a6bcf;
+  color: #fff;
+  border-color: #2a6bcf;
+}
+
+.layer-btn.disabled {
+  color: #555;
+  cursor: not-allowed;
+}
+
+.layer-btn.disabled:not(.active) {
+  background: #1e1e1e;
+}
+
+/* ================================================================== */
+/* View Layer Radio List                                                */
+/* ================================================================== */
+
+.view-radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.view-radio-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #aaa;
+  user-select: none;
+}
+
+.view-radio-item:hover:not(:has(input:disabled)) {
+  background: #2a2a2a;
+}
+
+.view-radio-item:has(input:checked) {
+  background: #1e3a5f;
+  color: #e0e0e0;
+}
+
+.view-radio-item:has(input:disabled) {
+  color: #555;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.view-radio-item input[type="radio"] {
+  accent-color: #2a6bcf;
+  flex-shrink: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.view-radio-item:has(input:disabled) input[type="radio"] {
+  cursor: not-allowed;
+}
+
+.view-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid #555;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.view-swatch-row {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.view-swatch-mini {
+  width: 6px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+.view-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #666;
+  margin: 6px 0 2px;
+  padding: 0 2px;
+}
+
+/* ================================================================== */
+/* Progress Bar                                                         */
+/* ================================================================== */
+
+.progress-bar-container {
+  height: 4px;
+  background: #333;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 0.25rem;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: #2a6bcf;
+  transition: width 0.2s ease;
+}
+
+/* ================================================================== */
+/* Viewer Canvas                                                        */
+/* ================================================================== */
+
+.viewer-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #111;
+  touch-action: none;
+}
+
+#viewerCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Dimensions set programmatically via ResizeObserver — no CSS stretching */
+}
+
+#graphOverlayCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  pointer-events: none;
+  /* Sized programmatically to match viewer canvas */
+}
+
+#cropOverlayCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10;
+  pointer-events: none;
+  /* Sized programmatically to match container */
+}
+
+/* ================================================================== */
+/* Minimap                                                              */
+/* ================================================================== */
+
+.minimap-container {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 2px;
+  pointer-events: none;
+}
+
+.minimap-container canvas {
+  display: block;
+  border-radius: 2px;
+}
+
+/* ================================================================== */
+/* Palette Editor — Sidebar                                            */
+/* ================================================================== */
+
+.palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.palette-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.palette-tool-btn {
+  padding: 2px 6px;
+  border: 1px solid #444;
+  background: #2a2a2a;
+  color: #aaa;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.palette-tool-btn:hover {
+  background: #333;
+  color: #fff;
+}
+
+.palette-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+
+.palette-row.disabled {
+  opacity: 0.4;
+}
+
+.palette-input-swatch,
+.palette-output-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.palette-arrow {
+  font-size: 0.75rem;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.palette-toggle {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  accent-color: #4a9eff;
+  cursor: pointer;
+}
+
+.palette-role-badge {
+  font-size: 0.55rem;
+  font-weight: 600;
+  padding: 1px 3px;
+  border-radius: 2px;
+  background: #444;
+  color: #ccc;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.palette-role-stroke {
+  background: #3a3a3a;
+  color: #999;
+}
+
+.palette-pct {
+  font-size: 0.65rem;
+  color: #777;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.palette-info {
+  font-size: 0.7rem;
+  color: #aaa;
+  font-family: monospace;
+}
+
+/* ================================================================== */
+/* Palette Editor — Modal                                              */
+/* ================================================================== */
+
+.palette-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.6);
+  align-items: center;
+  justify-content: center;
+}
+
+.palette-modal-overlay.open {
+  display: flex;
+}
+
+/* Hide modal while native color picker / eyedropper is active */
+.palette-modal-overlay.hidden-for-picker {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Floating banner shown during color picking */
+.picker-banner {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 10px 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  font-size: 0.85rem;
+  color: #ccc;
+}
+
+.picker-banner-label {
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.picker-banner-hint {
+  color: #888;
+  white-space: nowrap;
+}
+
+.picker-banner-cancel {
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  background: #333;
+  color: #ccc;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.picker-banner-cancel:hover {
+  background: #444;
+  color: #fff;
+}
+
+.palette-modal-content {
+  position: relative;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 8px;
+  width: 480px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.palette-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+}
+
+.palette-modal-header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin: 0;
+}
+
+.palette-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.palette-modal-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 1.3rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.palette-modal-close:hover {
+  color: #fff;
+}
+
+.palette-modal-hint {
+  padding: 6px 16px;
+  font-size: 0.7rem;
+  color: #666;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.palette-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* --- Bin (horizontal: inputs → output) --- */
+
+.palette-bin {
+  display: flex;
+  align-items: center;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 6px 8px;
+  gap: 0;
+}
+
+.palette-bin-bg {
+  border-color: #3a4a5a;
+}
+
+/* Left: stacked input rows */
+.bin-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.bin-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.bin-input-row:hover {
+  background: #2a2a2a;
+}
+
+.bin-input-row.selected {
+  background: rgba(74, 158, 255, 0.15);
+  outline: 1px solid #4a9eff;
+  outline-offset: -1px;
+}
+
+/* Center arrow */
+.bin-arrow {
+  flex-shrink: 0;
+  padding: 0 10px;
+  color: #555;
+  font-size: 1.1rem;
+}
+
+/* Right: output color */
+.bin-output {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: default;
+  transition: background 0.12s;
+}
+
+.bin-output.bin-assignable {
+  cursor: pointer;
+}
+
+.bin-output.bin-assignable:hover {
+  background: rgba(74, 158, 255, 0.12);
+  outline: 1px dashed #4a9eff;
+  outline-offset: -1px;
+}
+
+.bin-header-spacer {
+  flex: 1;
+}
+
+/* Buttons hidden until bin hover */
+.bin-hover-btn {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.palette-bin:hover .bin-hover-btn,
+.bin-input-row:hover .bin-hover-btn {
+  opacity: 1;
+}
+
+/* --- Swatches --- */
+
+.modal-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.modal-swatch-editable {
+  cursor: pointer;
+  border-style: dashed;
+}
+
+.modal-swatch-editable:hover {
+  border-color: #4a9eff;
+  border-style: solid;
+}
+
+.modal-swatch-sm {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+
+.modal-color-label {
+  font-size: 0.75rem;
+  color: #bbb;
+  font-family: monospace;
+}
+
+.modal-pct {
+  font-size: 0.65rem;
+  color: #666;
+  margin-left: auto;
+  min-width: 48px;
+  text-align: right;
+}
+
+/* --- Small buttons --- */
+
+.modal-small-btn {
+  padding: 1px 5px;
+  font-size: 0.6rem;
+  background: #333;
+  color: #999;
+  border: 1px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.modal-small-btn:hover {
+  background: #444;
+  color: #fff;
+}
+
+.modal-small-btn-danger:hover {
+  background: #3a2222;
+  color: #c66;
+  border-color: #c66;
+}
+
+/* --- Removed colors recovery --- */
+
+.palette-removed-section {
+  border-top: 1px solid #333;
+  padding-top: 6px;
+  margin-top: 4px;
+}
+
+.palette-removed-title {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: #555;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.palette-removed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  opacity: 0.5;
+}
+
+.palette-removed-row:hover {
+  opacity: 0.8;
+}
+
+.viewer-status {
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid #333;
+}
