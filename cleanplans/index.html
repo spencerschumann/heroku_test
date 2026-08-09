@@ -216,6 +216,34 @@
               Lossless denoised + cropped + palettized raster. PNG per page, PDF all pages.
               This is the file to share when reporting a bad area.
             </div>
+            <div class="export-row">
+              <span class="export-label">Overlay</span>
+              <button id="exportOverlayPdfBtn" class="primary-btn" disabled>PDF</button>
+            </div>
+            <div class="export-note">
+              Clean page with the fitted vectors drawn over it, all pages in one file.
+              Both are togglable layers in the viewer, so you can blink the fit on and
+              off against the ink to see where it disagrees.
+            </div>
+          </div>
+
+          <!-- ============================================================ -->
+          <!-- Diagnostics                                                  -->
+          <!-- ============================================================ -->
+          <div class="sidebar-section phase" id="diagnosticsSection">
+            <div class="phase-title">Diagnostics</div>
+            <div class="export-note" id="diagnosticsSummary">
+              Run Denoise or Vectorize; how long the browser was unable to respond
+              is measured and reported here.
+            </div>
+            <div class="export-row">
+              <button id="copyDiagnosticsBtn" class="primary-btn" disabled>Copy</button>
+              <button id="saveDiagnosticsBtn" class="primary-btn" disabled>Save</button>
+            </div>
+            <details id="diagnosticsDetails" style="display:none">
+              <summary class="export-note" style="cursor:pointer">Full report</summary>
+              <pre id="diagnosticsText"></pre>
+            </details>
           </div>
 
           <!-- Crop mode controls (replace the phases while cropping) -->

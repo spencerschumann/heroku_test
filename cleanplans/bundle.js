@@ -183,9 +183,9 @@ async function createOnnxSession(models) {
   if (caps.webgpu) {
     sessionOptions.preferredOutputLocation = "gpu-buffer";
   }
-  const t0 = performance.now();
+  const t02 = performance.now();
   const session = await ort.InferenceSession.create(modelUrl, sessionOptions);
-  const elapsed = (performance.now() - t0).toFixed(0);
+  const elapsed = (performance.now() - t02).toFixed(0);
   console.log(
     `${LOG} Session ready in ${elapsed} ms.  Inputs: [${session.inputNames}]  Outputs: [${session.outputNames}]`
   );
@@ -193,6 +193,7 @@ async function createOnnxSession(models) {
   console.log(`${LOG} receptive_field=${receptiveField}`);
   return {
     precision,
+    executionProvider: executionProviders[0],
     receptiveField,
     async run(inputName, data, dims) {
       const tensorType = data instanceof Float16Array ? "float16" : data instanceof Uint8Array ? "uint8" : "float32";
@@ -248,7 +249,7 @@ async function tiledDenoise(image, session, tileSize, rfPadding, onProgress) {
   console.log(
     `[ONNX Tiled] Denoising ${width}\xD7${height} image with ${tilesX}\xD7${tilesY}=${totalTiles} tiles (${tileSize}px, padding=${rfPadding}px)`
   );
-  const t0 = performance.now();
+  const t02 = performance.now();
   const data = new Uint8ClampedArray(width * height * 4);
   let totalInferenceTime = 0;
   for (let ty = 0; ty < tilesY; ty++) {
@@ -283,7 +284,7 @@ async function tiledDenoise(image, session, tileSize, rfPadding, onProgress) {
       onProgress?.((ty * tilesX + tx + 1) / totalTiles);
     }
   }
-  const totalTime = performance.now() - t0;
+  const totalTime = performance.now() - t02;
   console.log(
     `[ONNX Tiled] Inference: ${totalInferenceTime.toFixed(0)}ms (${(totalInferenceTime / totalTiles).toFixed(0)}ms avg/tile), total: ${totalTime.toFixed(0)}ms`
   );
@@ -604,10 +605,10 @@ function extractPaletteFromVoxels(grid, options) {
   console.log(
     `[palette] ${totalChromatic} chromatic pixels, ${voxels.size} voxels`
   );
-  const t0 = performance.now();
+  const t02 = performance.now();
   const smoothed = smoothVoxelGrid(voxels, smoothRadiusL, smoothSigmaL, smoothRadiusAB, smoothSigmaAB);
   const t1 = performance.now();
-  console.log(`[palette] smoothed to ${smoothed.size} voxels in ${(t1 - t0).toFixed(1)}ms (rL=${smoothRadiusL}, \u03C3L=${smoothSigmaL}, rAB=${smoothRadiusAB}, \u03C3ab=${smoothSigmaAB})`);
+  console.log(`[palette] smoothed to ${smoothed.size} voxels in ${(t1 - t02).toFixed(1)}ms (rL=${smoothRadiusL}, \u03C3L=${smoothSigmaL}, rAB=${smoothRadiusAB}, \u03C3ab=${smoothSigmaAB})`);
   const peaks = findLocalMaxima(smoothed);
   const t2 = performance.now();
   console.log(`[palette] found ${peaks.length} local maxima in ${(t2 - t1).toFixed(1)}ms`);
@@ -4279,10 +4280,10 @@ function relaxCuspsToLine(recon, pverts, dv) {
     const pa = A.prim, pb = B.prim;
     if (pa.type !== "arc" || pb.type !== "arc") continue;
     if (pa.ccw !== pb.ccw) continue;
-    const t0 = primitiveTangentAt(pa, false);
+    const t02 = primitiveTangentAt(pa, false);
     const t1 = primitiveTangentAt(pb, true);
-    const cross = t0.tx * t1.ty - t0.ty * t1.tx;
-    const dot = t0.tx * t1.tx + t0.ty * t1.ty;
+    const cross = t02.tx * t1.ty - t02.ty * t1.tx;
+    const dot = t02.tx * t1.tx + t02.ty * t1.ty;
     const turn = Math.atan2(cross, dot);
     if (Math.abs(turn) < 4 * Math.PI / 180) continue;
     const bend = pa.ccw ? 1 : -1;
@@ -5256,8 +5257,8 @@ async function fitCurves(device, graph, decomp, opts, onProgress, outValidation)
   const total = cache.chains.length;
   let lastYield = performance.now();
   for (let ci = 0; ci < total; ci++) {
-    const now = performance.now();
-    if (now - lastYield > 16) {
+    const now2 = performance.now();
+    if (now2 - lastYield > 16) {
       const pct = Math.round(ci / total * 100);
       onProgress?.(0.5 + ci / total * 0.5, `Fitting chains\u2026 ${pct}%`);
       await new Promise((r) => setTimeout(r, 0));
@@ -5724,8 +5725,8 @@ async function buildFitCache(device, graph, decomp, bandWidth, denseSeg, onProgr
   const chainDenseVerts = [];
   for (let ci = 0; ci < total; ci++) {
     chainDenseVerts.push(densifyChain(chains[ci], vertices, denseSeg));
-    const now = performance.now();
-    if (now - lastYield > 16) {
+    const now2 = performance.now();
+    if (now2 - lastYield > 16) {
       onProgress?.(ci / total * 0.25, `Densifying chains\u2026 ${Math.round(ci / total * 100)}%`);
       await new Promise((r) => setTimeout(r, 0));
       lastYield = performance.now();
@@ -5794,8 +5795,8 @@ async function buildFitCache(device, graph, decomp, bandWidth, denseSeg, onProgr
         }
       }
     }
-    const now = performance.now();
-    if (now - lastYield > 16) {
+    const now2 = performance.now();
+    if (now2 - lastYield > 16) {
       const pct = Math.round((layer + 1) / layerCount * 100);
       onProgress?.(0.25 + (layer + 1) / layerCount * 0.75, `Assigning pixels\u2026 ${pct}%`);
       await new Promise((r) => setTimeout(r, 0));
@@ -6308,6 +6309,93 @@ function curveGraphToSvg(graph, options) {
   parts.push(`</svg>`);
   return parts.join("\n") + "\n";
 }
+var OVERLAY_COLORS = [
+  [230, 0, 200],
+  // magenta
+  [0, 120, 255],
+  // blue
+  [255, 130, 0],
+  // orange
+  [0, 170, 90],
+  // green
+  [150, 60, 255]
+  // violet
+];
+var MAX_BEZIER_ARC = Math.PI / 2;
+var ARC_TOL_PX = 0.01;
+var ERR_COEFF = 181e-7;
+function arcToBeziers(out, cx, cy, r, a0, delta) {
+  const maxTheta = r > 0 ? Math.min(MAX_BEZIER_ARC, Math.pow(ARC_TOL_PX / (ERR_COEFF * r), 1 / 6)) : MAX_BEZIER_ARC;
+  const n = Math.max(1, Math.ceil(Math.abs(delta) / maxTheta));
+  const theta = delta / n;
+  const k = 4 / 3 * Math.tan(theta / 4);
+  let a = a0;
+  for (let i = 0; i < n; i++) {
+    const b = a + theta;
+    const cosA = Math.cos(a), sinA = Math.sin(a);
+    const cosB = Math.cos(b), sinB = Math.sin(b);
+    const x1 = cx + r * (cosA - k * sinA), y1 = cy + r * (sinA + k * cosA);
+    const x2 = cx + r * (cosB + k * sinB), y2 = cy + r * (sinB - k * cosB);
+    const x3 = cx + r * cosB, y3 = cy + r * sinB;
+    out.push(
+      `${fmt(x1, 3)} ${fmt(y1, 3)} ${fmt(x2, 3)} ${fmt(y2, 3)} ${fmt(x3, 3)} ${fmt(y3, 3)} c`
+    );
+    a = b;
+  }
+}
+function curveGraphToPdfOverlay(graph, options) {
+  const colors = options.colors ?? OVERLAY_COLORS;
+  const width = options.strokeWidthPx ?? 1;
+  const chainsByLayer = /* @__PURE__ */ new Map();
+  for (const chain of groupByChain(graph.segments)) {
+    const layer = chain[0].layer;
+    let list = chainsByLayer.get(layer);
+    if (!list) chainsByLayer.set(layer, list = []);
+    list.push(chain);
+  }
+  if (chainsByLayer.size === 0) return "";
+  const ops = [];
+  ops.push(`${fmt(width, 3)} w 1 J 1 j`);
+  for (const layerIdx of [...chainsByLayer.keys()].sort((a, b) => a - b)) {
+    const [r, g, b] = colors[layerIdx % colors.length];
+    ops.push(`${fmt(r / 255, 4)} ${fmt(g / 255, 4)} ${fmt(b / 255, 4)} RG`);
+    for (const chain of chainsByLayer.get(layerIdx)) {
+      if (chain.length === 1 && chain[0].primitive.type === "circle") {
+        const c = chain[0].primitive;
+        ops.push(`${fmt(c.cx + c.r, 3)} ${fmt(c.cy, 3)} m`);
+        arcToBeziers(ops, c.cx, c.cy, c.r, 0, 2 * Math.PI);
+        ops.push("h S");
+        continue;
+      }
+      const prims = chain.map((seg) => seg.primitive).filter((p) => p.type !== "circle");
+      if (prims.length === 0) continue;
+      const oriented = orientChain(prims);
+      let penX = NaN, penY = NaN;
+      let open = false;
+      for (const o of oriented) {
+        if (!Number.isFinite(penX) || Math.hypot(o.sx - penX, o.sy - penY) > CHAIN_JOIN_EPS) {
+          if (open) ops.push("S");
+          ops.push(`${fmt(o.sx, 3)} ${fmt(o.sy, 3)} m`);
+          open = true;
+        }
+        if (o.prim.type === "line") {
+          ops.push(`${fmt(o.ex, 3)} ${fmt(o.ey, 3)} l`);
+        } else {
+          const mag = arcSweepMag(o.prim);
+          const a0 = Math.atan2(o.sy - o.prim.cy, o.sx - o.prim.cx);
+          arcToBeziers(ops, o.prim.cx, o.prim.cy, o.prim.r, a0, o.sweepFlag === 1 ? mag : -mag);
+        }
+        penX = o.ex;
+        penY = o.ey;
+      }
+      if (open) {
+        if (chain[0].isClosed) ops.push("h");
+        ops.push("S");
+      }
+    }
+  }
+  return ops.join("\n") + "\n";
+}
 function curveGraphToDxf(graph, options) {
   const { dpi } = options;
   let maxLayer = options.layers.length - 1;
@@ -6500,6 +6588,8 @@ async function encodeCleanPng(img) {
   return concat([PNG_SIG, ...chunks]);
 }
 var hex = (b) => b.toString(16).padStart(2, "0");
+var OCG_SCAN = "Cleaned page";
+var OCG_VECTORS = "Fitted vectors";
 async function encodeCleanPdf(pages) {
   if (pages.length === 0) throw new Error("encodeCleanPdf: no pages");
   const objects = [];
@@ -6509,8 +6599,11 @@ async function encodeCleanPdf(pages) {
   };
   const catalogNum = 1, pagesNum = 2;
   objects.push(new Uint8Array(0), new Uint8Array(0));
+  const anyOverlay = pages.some((p) => p.overlay);
+  const scanOcgNum = anyOverlay ? addObject(ascii(`<< /Type /OCG /Name (${OCG_SCAN}) >>`)) : 0;
+  const vectorOcgNum = anyOverlay ? addObject(ascii(`<< /Type /OCG /Name (${OCG_VECTORS}) >>`)) : 0;
   const pageNums = [];
-  for (const { image, dpi } of pages) {
+  for (const { image, dpi, overlay } of pages) {
     const idx = indexColors(image);
     const { width, height } = image;
     let colorSpace;
@@ -6539,8 +6632,20 @@ stream
       ascii("\nendstream")
     ]));
     const wPt = width / dpi * 72, hPt = height / dpi * 72;
-    const content = ascii(`q ${wPt.toFixed(4)} 0 0 ${hPt.toFixed(4)} 0 0 cm /Im0 Do Q
-`);
+    let stream = `q ${wPt.toFixed(4)} 0 0 ${hPt.toFixed(4)} 0 0 cm /Im0 Do Q
+`;
+    if (anyOverlay) stream = `/OC /ocScan BDC
+${stream}EMC
+`;
+    if (overlay) {
+      const s = 72 / dpi;
+      stream += `/OC /ocVec BDC
+q ${s.toFixed(6)} 0 0 ${(-s).toFixed(6)} 0 ${hPt.toFixed(4)} cm
+` + overlay + `Q
+EMC
+`;
+    }
+    const content = ascii(stream);
     const contentNum = addObject(concat([
       ascii(`<< /Length ${content.length} >>
 stream
@@ -6548,11 +6653,15 @@ stream
       content,
       ascii("endstream")
     ]));
+    const properties = anyOverlay ? ` /Properties << /ocScan ${scanOcgNum} 0 R /ocVec ${vectorOcgNum} 0 R >>` : "";
     pageNums.push(addObject(ascii(
-      `<< /Type /Page /Parent ${pagesNum} 0 R /MediaBox [0 0 ${wPt.toFixed(4)} ${hPt.toFixed(4)}] /Resources << /XObject << /Im0 ${imgNum} 0 R >> >> /Contents ${contentNum} 0 R >>`
+      `<< /Type /Page /Parent ${pagesNum} 0 R /MediaBox [0 0 ${wPt.toFixed(4)} ${hPt.toFixed(4)}] /Resources << /XObject << /Im0 ${imgNum} 0 R >>${properties} >> /Contents ${contentNum} 0 R >>`
     )));
   }
-  objects[catalogNum - 1] = ascii(`<< /Type /Catalog /Pages ${pagesNum} 0 R >>`);
+  const ocProperties = anyOverlay ? ` /OCProperties << /OCGs [${scanOcgNum} 0 R ${vectorOcgNum} 0 R] /D << /Order [${scanOcgNum} 0 R ${vectorOcgNum} 0 R] /ON [${scanOcgNum} 0 R ${vectorOcgNum} 0 R] >> >>` : "";
+  objects[catalogNum - 1] = ascii(
+    `<< /Type /Catalog /Pages ${pagesNum} 0 R${ocProperties} >>`
+  );
   objects[pagesNum - 1] = ascii(
     `<< /Type /Pages /Kids [${pageNums.map((n) => `${n} 0 R`).join(" ")}] /Count ${pageNums.length} >>`
   );
@@ -6587,6 +6696,215 @@ ${xrefOffset}
 %%EOF
 `));
   return concat(parts);
+}
+
+// browser-app/perf.ts
+var profiling = false;
+var t0 = 0;
+var stages = [];
+var longTasks = [];
+var frameGaps = [];
+var observer = null;
+var rafHandle = 0;
+var openStage = null;
+var env = null;
+var notes = [];
+var now = () => performance.now();
+function note(text) {
+  if (profiling) notes.push(text);
+}
+function noteOnnx(executionProvider, precision) {
+  if (env) env.onnx = { executionProvider, precision };
+  else pendingOnnx = { executionProvider, precision };
+}
+var pendingOnnx = null;
+async function snapshotEnv() {
+  const nav = navigator;
+  const mem = performance.memory;
+  const snap = {
+    userAgent: navigator.userAgent,
+    deviceMemoryGb: typeof nav.deviceMemory === "number" ? nav.deviceMemory : null,
+    hardwareConcurrency: navigator.hardwareConcurrency ?? null,
+    devicePixelRatio: globalThis.devicePixelRatio ?? 1,
+    screen: `${globalThis.screen?.width ?? 0}x${globalThis.screen?.height ?? 0}`,
+    crossOriginIsolated: !!globalThis.crossOriginIsolated,
+    webgpu: { available: false },
+    heapUsedMb: mem ? Math.round(mem.usedJSHeapSize / 1e6) : null,
+    heapLimitMb: mem ? Math.round(mem.jsHeapSizeLimit / 1e6) : null
+  };
+  try {
+    const gpu = nav.gpu;
+    if (gpu) {
+      const adapter = await gpu.requestAdapter();
+      if (adapter) {
+        const a = adapter;
+        const info = typeof a.requestAdapterInfo === "function" ? await a.requestAdapterInfo() : a.info;
+        snap.webgpu = {
+          available: true,
+          vendor: info?.vendor || void 0,
+          architecture: info?.architecture || void 0,
+          device: info?.device || void 0,
+          description: info?.description || void 0,
+          maxTextureDimension2D: adapter.limits.maxTextureDimension2D,
+          maxBufferSize: Number(adapter.limits.maxBufferSize),
+          maxStorageBufferBindingSize: Number(adapter.limits.maxStorageBufferBindingSize),
+          maxComputeWorkgroupsPerDimension: adapter.limits.maxComputeWorkgroupsPerDimension,
+          isFallbackAdapter: a.isFallbackAdapter ?? a.info?.isFallbackAdapter ?? void 0
+        };
+      }
+    }
+  } catch {
+  }
+  return snap;
+}
+async function startProfile() {
+  stopProfile();
+  stages.length = 0;
+  longTasks.length = 0;
+  frameGaps.length = 0;
+  notes = [];
+  profiling = true;
+  t0 = now();
+  env = await snapshotEnv();
+  if (pendingOnnx) {
+    env.onnx = pendingOnnx;
+    pendingOnnx = null;
+  }
+  try {
+    observer = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        longTasks.push({ start: e.startTime, duration: e.duration });
+      }
+    });
+    observer.observe({ type: "longtask", buffered: true });
+  } catch {
+    observer = null;
+  }
+  let last = now();
+  const tick = () => {
+    const t = now();
+    const gap = t - last;
+    last = t;
+    if (gap > 50) frameGaps.push({ at: t - gap, gap });
+    rafHandle = requestAnimationFrame(tick);
+  };
+  rafHandle = requestAnimationFrame(tick);
+}
+function stopProfile() {
+  profiling = false;
+  if (openStage) endStage();
+  observer?.disconnect();
+  observer = null;
+  if (rafHandle) cancelAnimationFrame(rafHandle);
+  rafHandle = 0;
+}
+function beginStage(name) {
+  if (!profiling) return;
+  if (openStage) endStage();
+  openStage = { name, startMs: now() };
+}
+function endStage() {
+  if (!openStage) return;
+  const { name, startMs } = openStage;
+  openStage = null;
+  stages.push({
+    name,
+    startMs,
+    endMs: now(),
+    longTaskCount: 0,
+    longTaskTotalMs: 0,
+    longTaskMaxMs: 0,
+    worstFrameGapMs: 0
+  });
+}
+function attribute() {
+  const out = stages.map((s) => ({ ...s }));
+  const overlap = (aStart, aEnd, s) => Math.max(0, Math.min(aEnd, s.endMs) - Math.max(aStart, s.startMs));
+  for (const t of longTasks) {
+    const end = t.start + t.duration;
+    let best = null, bestOv = 0;
+    for (const s of out) {
+      const ov = overlap(t.start, end, s);
+      if (ov <= 0) continue;
+      s.longTaskTotalMs += ov;
+      if (ov > bestOv) {
+        bestOv = ov;
+        best = s;
+      }
+    }
+    if (best) {
+      best.longTaskCount++;
+      best.longTaskMaxMs = Math.max(best.longTaskMaxMs, t.duration);
+    }
+  }
+  for (const g of frameGaps) {
+    const end = g.at + g.gap;
+    let best = null, bestOv = 0;
+    for (const s of out) {
+      const ov = overlap(g.at, end, s);
+      if (ov > bestOv) {
+        bestOv = ov;
+        best = s;
+      }
+    }
+    if (best) best.worstFrameGapMs = Math.max(best.worstFrameGapMs, g.gap);
+  }
+  return out;
+}
+function getReport() {
+  const attributed = attribute();
+  const totalMs = attributed.length ? attributed[attributed.length - 1].endMs - attributed[0].startMs : now() - t0;
+  const longTaskTotalMs = longTasks.reduce((a, t) => a + t.duration, 0);
+  return {
+    env,
+    notes,
+    totalMs,
+    stages: attributed,
+    longTaskCount: longTasks.length,
+    longTaskTotalMs,
+    longTaskMaxMs: longTasks.reduce((a, t) => Math.max(a, t.duration), 0),
+    worstFrameGapMs: frameGaps.reduce((a, g) => Math.max(a, g.gap), 0),
+    blockedFraction: totalMs > 0 ? longTaskTotalMs / totalMs : 0
+  };
+}
+var secs = (ms) => `${(ms / 1e3).toFixed(1)}s`;
+function formatReport() {
+  const r = getReport();
+  const L = [];
+  const e = r.env;
+  L.push("cleanplans responsiveness report");
+  L.push("=".repeat(60));
+  if (e) {
+    L.push(`UA           ${e.userAgent}`);
+    L.push(`screen       ${e.screen} @ dpr ${e.devicePixelRatio}   cores ${e.hardwareConcurrency ?? "?"}   RAM ${e.deviceMemoryGb ?? "?"}GB`);
+    L.push(`crossOriginIsolated ${e.crossOriginIsolated}` + (e.heapLimitMb ? `   heap ${e.heapUsedMb}/${e.heapLimitMb}MB` : ""));
+    if (e.webgpu.available) {
+      const gpuName = [e.webgpu.vendor, e.webgpu.architecture, e.webgpu.device, e.webgpu.description].filter(Boolean).join(" ") || "(browser withheld details)";
+      L.push(`WebGPU       ${gpuName}` + (e.webgpu.isFallbackAdapter ? "   *** FALLBACK (software) ADAPTER ***" : ""));
+      L.push(`  limits     maxTexture2D ${e.webgpu.maxTextureDimension2D}  maxBuffer ${Math.round((e.webgpu.maxBufferSize ?? 0) / 1e6)}MB  maxStorageBinding ${Math.round((e.webgpu.maxStorageBufferBindingSize ?? 0) / 1e6)}MB`);
+    } else {
+      L.push("WebGPU       NOT AVAILABLE");
+    }
+    if (e.onnx) L.push(`denoiser     ${e.onnx.executionProvider} / ${e.onnx.precision}`);
+  }
+  for (const n of r.notes) L.push(`note         ${n}`);
+  L.push("");
+  L.push(`total ${secs(r.totalMs)}   blocked ${secs(r.longTaskTotalMs)} (${(r.blockedFraction * 100).toFixed(0)}% of wall clock)`);
+  L.push(`worst single block ${secs(r.longTaskMaxMs)}   worst frame gap ${secs(r.worstFrameGapMs)}`);
+  L.push("");
+  L.push(`${"stage".padEnd(34)}${"wall".padStart(8)}${"blocked".padStart(9)}${"tasks".padStart(7)}${"worst".padStart(8)}${"frame".padStart(8)}`);
+  L.push("-".repeat(74));
+  for (const s of r.stages) {
+    L.push(
+      s.name.slice(0, 33).padEnd(34) + secs(s.endMs - s.startMs).padStart(8) + secs(s.longTaskTotalMs).padStart(9) + String(s.longTaskCount).padStart(7) + secs(s.longTaskMaxMs).padStart(8) + secs(s.worstFrameGapMs).padStart(8)
+    );
+  }
+  L.push("-".repeat(74));
+  L.push("");
+  L.push("worst  = longest single uninterrupted main-thread task in that stage.");
+  L.push("frame  = longest gap between animation frames; larger than `worst`");
+  L.push("         means something outside JS (GPU, compositor) also stalled.");
+  return L.join("\n");
 }
 
 // src/gpu/gpu_context.ts
@@ -9807,7 +10125,7 @@ function startAnimationLoop() {
   requestAnimationFrame(animationTick);
 }
 function animationTick() {
-  const now = performance.now();
+  const now2 = performance.now();
   const dZoom = targetZoom - state.zoom;
   const dPanX = targetPanX - state.panX;
   const dPanY = targetPanY - state.panY;
@@ -9822,7 +10140,7 @@ function animationTick() {
     state.panY += dPanY * ANIM_LERP;
   }
   redraw();
-  if (!converged || now - lastInputTime < KEEP_ALIVE_MS) {
+  if (!converged || now2 - lastInputTime < KEEP_ALIVE_MS) {
     requestAnimationFrame(animationTick);
   } else {
     animating = false;
@@ -9912,11 +10230,11 @@ function initViewer(callbacks4) {
   container.addEventListener("touchstart", (e) => {
     e.preventDefault();
     if (e.touches.length === 2) {
-      const t0 = e.touches[0];
+      const t02 = e.touches[0];
       const t1 = e.touches[1];
-      touchPrevDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
-      touchPrevMidX = (t0.clientX + t1.clientX) / 2;
-      touchPrevMidY = (t0.clientY + t1.clientY) / 2;
+      touchPrevDist = Math.hypot(t1.clientX - t02.clientX, t1.clientY - t02.clientY);
+      touchPrevMidX = (t02.clientX + t1.clientX) / 2;
+      touchPrevMidY = (t02.clientY + t1.clientY) / 2;
       isTouchPanning = false;
     } else if (e.touches.length === 1) {
       isTouchPanning = true;
@@ -9928,11 +10246,11 @@ function initViewer(callbacks4) {
     e.preventDefault();
     markScrollActive();
     if (e.touches.length === 2) {
-      const t0 = e.touches[0];
+      const t02 = e.touches[0];
       const t1 = e.touches[1];
-      const dist3 = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
-      const midX = (t0.clientX + t1.clientX) / 2;
-      const midY = (t0.clientY + t1.clientY) / 2;
+      const dist3 = Math.hypot(t1.clientX - t02.clientX, t1.clientY - t02.clientY);
+      const midX = (t02.clientX + t1.clientX) / 2;
+      const midY = (t02.clientY + t1.clientY) / 2;
       if (touchPrevDist > 0) {
         targetPanX += midX - touchPrevMidX;
         targetPanY += midY - touchPrevMidY;
@@ -10123,18 +10441,18 @@ function redraw() {
     state.selectedPage = closest.pageNumber;
     viewerCallbacks.onActivePageChanged(closest.pageNumber);
   }
-  const t0 = performance.now();
-  if (t0 - _lastDomUpdateTime > 100) {
+  const t02 = performance.now();
+  if (t02 - _lastDomUpdateTime > 100) {
     const zoomText = `${Math.round(state.zoom * 100)}%`;
     if (elZoomLevel && zoomText !== _lastZoomText) {
       elZoomLevel.textContent = zoomText;
       _lastZoomText = zoomText;
     }
-    _lastDomUpdateTime = t0;
+    _lastDomUpdateTime = t02;
   }
-  if (t0 - _lastMinimapTime > 50) {
+  if (t02 - _lastMinimapTime > 50) {
     updateMinimap(layout);
-    _lastMinimapTime = t0;
+    _lastMinimapTime = t02;
   }
   if (graphOverlay) {
     if (graphOverlayCanvas.width !== cw || graphOverlayCanvas.height !== ch) {
@@ -10340,6 +10658,7 @@ async function ensureOnnxSession() {
       receptiveField: 45
       // DilatedDnCNNSmall — symmetric dilations (1,2,4,8,4,2,1)
     });
+    noteOnnx(state.onnxSession.executionProvider, state.onnxSession.precision);
     setStatus("ONNX denoiser model loaded");
   } catch (err) {
     console.error("Failed to load ONNX model:", err);
@@ -10629,7 +10948,7 @@ async function runProjectPalette() {
   try {
     state.editablePalette = null;
     const total = eligiblePages.length;
-    const t0 = performance.now();
+    const t02 = performance.now();
     const voxelGrids = [];
     const bwCountsList = [];
     for (let i = 0; i < total; i++) {
@@ -10672,7 +10991,7 @@ async function runProjectPalette() {
     updatePaletteProgress(1);
     renderPaletteEditor(state.editablePalette);
     await persistPalette();
-    setStatus(`Palette: ${state.editablePalette.inputs.length} colors from ${voxelGrids.length} pages (${(t1 - t0).toFixed(0)}ms)`);
+    setStatus(`Palette: ${state.editablePalette.inputs.length} colors from ${voxelGrids.length} pages (${(t1 - t02).toFixed(0)}ms)`);
   } catch (err) {
     console.error("Palette extraction failed:", err);
     setStatus("Palette extraction failed \u2014 try again (GPU may have been reset)");
@@ -10683,6 +11002,7 @@ async function runProjectPalette() {
   }
 }
 async function runApplyPalette() {
+  beginStage("apply palette (decompose+cleanup)");
   const palette = state.editablePalette;
   if (!palette) {
     setStatus("Extract a palette first");
@@ -10741,6 +11061,7 @@ async function runApplyPalette() {
   refreshSidebar();
 }
 async function runThinning() {
+  beginStage("thin");
   if (state.isThinning) return;
   if (state.paletteDecompositions.size === 0) {
     setStatus("Apply palette first, then thin");
@@ -10789,6 +11110,7 @@ async function runThinning() {
   await runPathConnect(gpuDevice);
 }
 async function runPathConnect(gpuDevice) {
+  beginStage("path connect");
   const pages = [...state.thinnedDecompositions.keys()].sort((a, b) => a - b);
   if (pages.length === 0) return;
   setStatus("Connecting paths\u2026");
@@ -10884,6 +11206,7 @@ function initCursorReadout() {
   });
 }
 async function runPathSimplify() {
+  beginStage("simplify + despur");
   if (state.pathGraphs.size === 0) {
     setStatus("Run Thin first to generate path graphs");
     return;
@@ -10909,6 +11232,7 @@ async function runPathSimplify() {
   setStatus(`Simplified: ${totalV} vertices, ${totalE} edges (tolerance ${DEFAULT_SIMPLIFY_TOL}px)`);
 }
 function runUndash() {
+  beginStage("undash");
   if (state.simplifiedPathGraphs.size === 0) {
     setStatus("Run Simplify first");
     return;
@@ -10930,6 +11254,7 @@ function runUndash() {
   setStatus(`Undashed: ${totalV} vertices, ${totalE} edges (gap \u2264${DEFAULT_UNDASH_MAX_GAP}px, angle \u2264${DEFAULT_UNDASH_MAX_ANGLE}\xB0)`);
 }
 async function runCurveFit() {
+  beginStage("curve fit");
   if (state.undashedPathGraphs.size === 0) {
     setStatus("Run Undash first");
     return;
@@ -10983,9 +11308,30 @@ function triggerDownload(filename, content, mime) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1e4);
 }
+function refreshDiagnostics() {
+  const summary = document.getElementById("diagnosticsSummary");
+  const details = document.getElementById("diagnosticsDetails");
+  const text = document.getElementById("diagnosticsText");
+  const copyBtn = document.getElementById("copyDiagnosticsBtn");
+  const saveBtn = document.getElementById("saveDiagnosticsBtn");
+  const r = getReport();
+  if (r.stages.length === 0) return;
+  lastDiagnosticsText = formatReport();
+  if (text) text.textContent = lastDiagnosticsText;
+  if (details) details.style.display = "";
+  if (copyBtn) copyBtn.disabled = false;
+  if (saveBtn) saveBtn.disabled = false;
+  const pct = (r.blockedFraction * 100).toFixed(0);
+  const worst = (Math.max(r.longTaskMaxMs, r.worstFrameGapMs) / 1e3).toFixed(1);
+  if (summary) {
+    summary.textContent = `${(r.totalMs / 1e3).toFixed(0)}s total, unresponsive for ${pct}% of it. Longest single freeze ${worst}s.`;
+  }
+  console.log("\n" + lastDiagnosticsText);
+}
+var lastDiagnosticsText = "";
 function updateExportButtons() {
   const canExport = state.curveGraphs.size > 0;
-  for (const id of ["exportSvgBtn", "exportDxfBtn"]) {
+  for (const id of ["exportSvgBtn", "exportDxfBtn", "exportOverlayPdfBtn"]) {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = !canExport;
   }
@@ -11064,6 +11410,56 @@ async function runCleanExport(format) {
     setStatus("Clean export failed \u2014 check console");
   }
 }
+async function runOverlayExport() {
+  if (state.curveGraphs.size === 0) {
+    setStatus("Run Vectorize first \u2014 nothing to overlay yet");
+    return;
+  }
+  let gpuDevice;
+  try {
+    gpuDevice = (await getGPUContext()).device;
+  } catch (err) {
+    setStatus("WebGPU unavailable \u2014 cannot read cleaned pages");
+    console.error("getGPUContext failed:", err);
+    return;
+  }
+  const base = (state.pdfFileName || "cleanplans").replace(/\.pdf$/i, "");
+  const pages = [...state.curveGraphs.keys()].sort((a, b) => a - b);
+  try {
+    const rasterPages = [];
+    const skipped = [];
+    for (const pageNumber of pages) {
+      const decomp = state.paletteDecompositions.get(pageNumber);
+      if (!decomp) {
+        skipped.push(pageNumber);
+        continue;
+      }
+      setStatus(`Reading clean page ${pageNumber}\u2026`);
+      const graph = state.curveGraphs.get(pageNumber);
+      rasterPages.push({
+        image: await readAllLayersAsRGBA(gpuDevice, decomp),
+        dpi: EXPORT_DPI,
+        overlay: curveGraphToPdfOverlay(graph, {
+          dpi: EXPORT_DPI,
+          layers: exportLayersForPage(pageNumber, graph.layerCount)
+        })
+      });
+    }
+    if (rasterPages.length === 0) {
+      setStatus("No page has both a cleaned raster and a fit \u2014 nothing to overlay");
+      return;
+    }
+    setStatus("Encoding overlay PDF\u2026");
+    triggerDownload(`${base}-overlay.pdf`, await encodeCleanPdf(rasterPages), "application/pdf");
+    const n = rasterPages.length;
+    setStatus(
+      `Exported overlay PDF (${n} page${n !== 1 ? "s" : ""})` + (skipped.length ? ` \u2014 skipped ${skipped.join(", ")}: no cleaned raster` : "")
+    );
+  } catch (err) {
+    console.error("overlay export failed:", err);
+    setStatus("Overlay export failed \u2014 check console");
+  }
+}
 async function runVectorize() {
   if (state.isVectorizing) return;
   if (!state.editablePalette) {
@@ -11076,6 +11472,8 @@ async function runVectorize() {
     btn.disabled = true;
     btn.textContent = "Vectorizing\u2026";
   }
+  await startProfile();
+  note(`vectorize ${state.selectedPages.size || 1} page(s) at ${EXPORT_DPI} dpi`);
   try {
     await runApplyPalette();
     if (state.paletteDecompositions.size === 0) return;
@@ -11093,6 +11491,8 @@ async function runVectorize() {
       btn.disabled = false;
       btn.textContent = "Vectorize";
     }
+    stopProfile();
+    refreshDiagnostics();
   }
 }
 function setViewLayer(mode) {
@@ -11381,6 +11781,9 @@ async function runDenoise() {
   const pages = layout.pages;
   const total = pages.length;
   const failed = [];
+  await startProfile();
+  note(`denoise ${total} page(s)`);
+  beginStage("denoise");
   try {
     const ONNX_REFRESH_PAGES = 5;
     for (let idx = 0; idx < pages.length; idx++) {
@@ -11459,6 +11862,8 @@ async function runDenoise() {
   } finally {
     state.isDenoising = false;
     setDenoiseButtonEnabled(true);
+    stopProfile();
+    refreshDiagnostics();
   }
 }
 function init() {
@@ -11541,6 +11946,38 @@ function init() {
   const exportCleanPdfBtn = document.getElementById("exportCleanPdfBtn");
   if (exportCleanPdfBtn) exportCleanPdfBtn.addEventListener("click", () => {
     void runCleanExport("pdf");
+  });
+  const exportOverlayPdfBtn = document.getElementById("exportOverlayPdfBtn");
+  if (exportOverlayPdfBtn) exportOverlayPdfBtn.addEventListener("click", () => {
+    void runOverlayExport();
+  });
+  const copyDiagnosticsBtn = document.getElementById("copyDiagnosticsBtn");
+  copyDiagnosticsBtn?.addEventListener("click", async () => {
+    if (!lastDiagnosticsText) return;
+    try {
+      await navigator.clipboard.writeText(lastDiagnosticsText);
+      copyDiagnosticsBtn.textContent = "Copied";
+    } catch {
+      const pre = document.getElementById("diagnosticsText");
+      const details = document.getElementById("diagnosticsDetails");
+      if (details) details.open = true;
+      if (pre) {
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        const sel = globalThis.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+      copyDiagnosticsBtn.textContent = "Select + copy";
+    }
+    setTimeout(() => {
+      copyDiagnosticsBtn.textContent = "Copy";
+    }, 2500);
+  });
+  const saveDiagnosticsBtn = document.getElementById("saveDiagnosticsBtn");
+  saveDiagnosticsBtn?.addEventListener("click", () => {
+    if (!lastDiagnosticsText) return;
+    triggerDownload("cleanplans-diagnostics.txt", lastDiagnosticsText, "text/plain");
   });
   const showFitCb = document.getElementById("showFittedCurves");
   if (showFitCb) {
