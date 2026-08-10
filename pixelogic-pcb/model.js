@@ -4,9 +4,9 @@
     // Unlike simulation/pixelogic's tile world, connectivity here is purely
     // adjacency-based: two orthogonally-touching conductor-ish pixels are
     // connected, full stop - there is no per-side "pipe fitting" bitmask to
-    // draw. Four pixel colors only: insulator, conductor, mux body (gray),
-    // mux control (gold). Crossovers, voltage sources and mux macros are all
-    // *inferred* from adjacency/shape rather than placed as distinct tools.
+    // draw. Three pixel colors only: insulator, conductor, and mux body
+    // (gray). Crossovers, voltage sources and mux macros are all *inferred*
+    // from adjacency/shape rather than placed as distinct tools.
 
     const CELL_SIZE = 32;
     const DEFAULT_W = 48, DEFAULT_H = 30;
@@ -34,10 +34,14 @@
     //            hole no longer means anything special)
     // Conductor: 10-12 (charge 0-2)
     // +V: 13   -V: 14  (explicit sources - a distinct tool that can sit right
-    //            against a mux and drive it directly; an isolated gold/gray
-    //            pixel that doesn't touch any mux body/control also acts as
-    //            one, see isolatedGold/isolatedGray below)
-    // Gold (mux control colored pixel): 15-20 (charge*2 + wasActive)
+    //            against a mux and drive it directly; a gray blob that isn't
+    //            a mux also acts as a -V one, see isolatedGray below)
+    // 15-20:     RETIRED. Held the mux control band (gold) of the old band
+    //            mux, removed when the box mux became the only style. The
+    //            range stays reserved rather than being reused, so a circuit
+    //            saved before the removal loads with those pixels dropped
+    //            (isValidId rejects them) instead of silently reading as
+    //            whatever moved into their numbers.
     // Gray (mux body colored pixel):     21-26 (charge*2 + wasActive)
     // Crossover conductor: 27-35 (27 + v*3 + h) - a conductor whose four
     //            neighbors are all conductors routes its vertical axis (N<->S)
@@ -56,7 +60,6 @@
     const ID_CONDUCTOR_BASE = 10, ID_CONDUCTOR_MAX = 12;
     const ID_POS = 13;
     const ID_NEG = 14;
-    const ID_GOLD_BASE = 15, ID_GOLD_MAX = 20;
     const ID_GRAY_BASE = 21, ID_GRAY_MAX = 26;
     const ID_XOVER_BASE = 27, ID_XOVER_MAX = 35;
     const ID_LED_BASE = 36, ID_LED_MAX = 38;
@@ -107,10 +110,6 @@
         return OFF;
     }
 
-    function isGoldId(id) { return id >= ID_GOLD_BASE && id <= ID_GOLD_MAX; }
-    function goldCharge(id) { return Math.floor((id - ID_GOLD_BASE) / 2); }
-    function goldWasActive(id) { return ((id - ID_GOLD_BASE) % 2) === 1; }
-    function makeGold(charge, wasActive) { return ID_GOLD_BASE + charge * 2 + (wasActive ? 1 : 0); }
 
     function isGrayId(id) { return id >= ID_GRAY_BASE && id <= ID_GRAY_MAX; }
     function grayCharge(id) { return Math.floor((id - ID_GRAY_BASE) / 2); }
@@ -175,35 +174,42 @@
     // this cell conduct" but direction-agnostic and boolean: a crossover's
     // two axes are kept separate for charge, but both still read as "wire is
     // here" for this shape/connectivity purpose.
-    function cellConnects(x, y) {
+    // `out`, when given, is the direction from (x,y) toward whoever is
+    // asking. Only a box mux cares: its cells connect on one face and are
+    // package everywhere else, so a neighbor that asks direction-agnostically
+    // gets "yes" from a pin it is merely sitting beside. That is what turned
+    // a wire elbowing past a pin into a tee with an arm buried in the
+    // plastic. Everything else here is per-cell and ignores `out`.
+    function cellConnects(x, y, out) {
         if (!inBounds(x, y)) return false;
         const id = cells[idx(x, y)];
         if (isInsulatorId(id)) return false;
         if (isConductorId(id) || isXover(id)) return true;
         if (id === ID_POS || id === ID_NEG) return true;
         if (isLed(id) || isSwitch(id) || isToggle(id)) return true;
-        if (isGoldId(id) || isGrayId(id)) {
+        if (isGrayId(id)) {
             const role = roles[idx(x, y)];
             if (!role) return false;
             // A box mux cell connects only where it actually has a lead —
             // its four live faces are the four the view draws leads on, and
             // the rest of the outline is package. Every other role is
             // per-cell, with no face of its own to distinguish.
-            if (role.lead !== undefined) return role.lead !== null;
-            return role.kind === 'corner' || role.kind === 'end' || role.kind === 'comMiddle'
-                || role.kind === 'isolatedGold' || role.kind === 'isolatedGray';
+            if (role.lead !== undefined) {
+                if (!role.lead) return false;
+                return !out || (role.lead[0] === out[0] && role.lead[1] === out[1]);
+            }
+            return role.kind === 'isolatedGray';
         }
         return false;
     }
 
     // ===== Painting =====
-    // Colors: 'insulator', 'conductor', 'gold', 'gray'
+    // Colors: 'insulator', 'conductor', 'gray'
     function paintCell(x, y, color) {
         if (!inBounds(x, y) || isLocked(x, y)) return;
         let id;
         switch (color) {
             case 'conductor': id = makeConductor(OFF); break;
-            case 'gold': id = makeGold(OFF, false); break;
             case 'gray': id = makeGray(OFF, false); break;
             case 'pos': id = ID_POS; break;
             case 'neg': id = ID_NEG; break;
@@ -213,52 +219,10 @@
             default: id = ID_INSULATOR_PLAIN;
         }
         cells[idx(x, y)] = id;
-        // Auto-complete affordance: a gray pixel dropped flush against a
-        // 3-long gold bar fills out the whole 3-cell body row. (The old
-        // widen/deepen affordances went away with multi-size muxes.)
-        if (color === 'gray') autoExtendMuxBody(x, y);
         recomputeRoles();
     }
 
-    // Drawing affordance: the usual way to build a mux is to draw the gold
-    // control bar, then tap once below it. Dropping a body (gray) pixel
-    // flush against a straight, exactly-3-long, 1-thick gold bar fills out
-    // the whole 3-cell body row, snapping to a complete, valid 2x3 mux from
-    // a single pixel. Bars of any other length aren't a valid mux size, so
-    // they get no autofill (the stray pixel just reads as invalid feedback).
-    function autoExtendMuxBody(bx, by) {
-        for (const [dx, dy] of DIRS) {
-            const gx = bx + dx, gy = by + dy; // must land directly on the bar
-            if (!isGoldId(getCell(gx, gy))) continue;
-            const along = dy !== 0 ? [1, 0] : [0, 1];  // bar runs perpendicular to the walk
-            let lo = 0, hi = 0;
-            while (isGoldId(getCell(gx - along[0] * (lo + 1), gy - along[1] * (lo + 1)))) lo++;
-            while (isGoldId(getCell(gx + along[0] * (hi + 1), gy + along[1] * (hi + 1)))) hi++;
-            if (lo + hi + 1 !== 3) continue;
-            // Require a 1-thick bar: no gold on either perpendicular side of the
-            // run (a 2D gold blob isn't a control band and shouldn't autofill).
-            let thin = true;
-            for (let i = -lo; i <= hi && thin; i++) {
-                const cx = gx + along[0] * i, cy = gy + along[1] * i;
-                if (isGoldId(getCell(cx + dx, cy + dy)) || isGoldId(getCell(cx - dx, cy - dy))) thin = false;
-            }
-            if (!thin) continue;
-            // Fill the body row across the bar's full extent. Skips a +V/-V
-            // source cell (see processGoldBlob) — an already-meaningful cell
-            // the sweep shouldn't silently clobber back to plain gray.
-            for (let i = -lo; i <= hi; i++) {
-                const cx = gx + along[0] * i - dx, cy = gy + along[1] * i - dy;
-                if (!inBounds(cx, cy) || isLocked(cx, cy)) continue;
-                const existing = getCell(cx, cy);
-                if (existing === ID_POS || existing === ID_NEG) continue;
-                setCellRaw(cx, cy, makeGray(OFF, false));
-            }
-            return;
-        }
-    }
-
     function colorOfCell(id) {
-        if (isGoldId(id)) return 'gold';
         if (isGrayId(id)) return 'gray';
         if (id === ID_POS) return 'pos';
         if (id === ID_NEG) return 'neg';
@@ -308,14 +272,9 @@
 
     // ===== Mux macro detection =====
     //
-    // A mux macro is a rectangle: a 1-pixel-deep control band (gold) of
-    // width W>=3 flush against one full edge of a body band (gray) of the
-    // same width and any depth D>=1. Corner control pixels (the band's two
-    // ends) are the only ones that accept an external wire; whichever
-    // corner currently has a wire attached is the live NO side. The body's
-    // two end columns (1 pixel wide, D deep) are the switched NO/NC pins;
-    // everything else in the body is COM (a (W-2) x D shared bus). This
-    // works at any of the 4 orientations.
+    // One shape: a solid 3x2 of body (gray) pixels, at any of the 4
+    // orientations, wired into a mux by what touches its faces (see
+    // buildBoxMux). Gray that isn't a 3x2 is a -V source pad.
     //
     // Detection runs on the whole grid after every edit (grids here are
     // small enough - tens of columns - that a full rescan is cheap).
@@ -346,45 +305,104 @@
 
     function recomputeRoles() {
         roles.fill(null);
-        const claimedGray = new Set(); // idx of gray cells claimed as end/comMiddle
-
-        const goldVisited = new Set();
-        for (let y = 0; y < GRID_H; y++) {
-            for (let x = 0; x < GRID_W; x++) {
-                const i = idx(x, y);
-                if (goldVisited.has(i)) continue;
-                if (!isGoldId(cells[i])) continue;
-                const blob = floodFill(x, y, (nx, ny) => isGoldId(cells[idx(nx, ny)]), goldVisited);
-                processGoldBlob(blob, claimedGray);
-            }
-        }
-
         const grayVisited = new Set();
         for (let y = 0; y < GRID_H; y++) {
             for (let x = 0; x < GRID_W; x++) {
                 const i = idx(x, y);
-                if (grayVisited.has(i) || claimedGray.has(i)) continue;
+                if (grayVisited.has(i)) continue;
                 if (!isGrayId(cells[i])) continue;
-                const blob = floodFill(x, y, (nx, ny) => isGrayId(cells[idx(nx, ny)]) && !claimedGray.has(idx(nx, ny)), grayVisited);
-                // Gray with no adjacent control band is either the second mux
-                // style — a 3x2 box of body cells and nothing else (see
-                // buildBoxMux) — or an isolated -V source. Gray that DOES
-                // touch gold without forming a valid band mux is an inert
-                // stray fragment; gold adjacency is also what keeps the two
-                // mux styles from ever competing for the same pixels, so a
-                // stray body row flush against a band mux still reads as the
-                // mistake it is rather than silently becoming a box.
-                const touchesGold = blob.some(([bx, by]) => DIRS.some(([dx, dy]) => isGoldId(getCell(bx + dx, by + dy))));
-                if (!touchesGold && buildBoxMux(blob)) continue;
-                const kind = touchesGold ? 'invalidGray' : 'isolatedGray';
-                markBlob(blob, kind);
+                const blob = floodFill(x, y, (nx, ny) => isGrayId(cells[idx(nx, ny)]), grayVisited);
+                // A solid 3x2 is a mux; any other gray blob is a -V source
+                // pad. There is nothing in between to be invalid about — the
+                // shape either is the part or it is a pad.
+                if (buildBoxMux(blob)) continue;
+                markBlob(blob, 'isolatedGray');
             }
         }
+        prunePendingLinks();
+    }
+
+    // ===== Pending links (the ratsnest) =====
+    //
+    // A connection a rearrange could not keep. Rather than refuse the whole
+    // drag — which used to leave you nudging a part around wondering which
+    // of its wires was the problem — the move goes through and what it owes
+    // is drawn as a straight dashed line, the way a PCB tool shows an
+    // unrouted airwire. Draw the wire yourself and the line goes away.
+    //
+    // Transient by design: this is the one thing here NOT derivable from the
+    // pixels, so it is session state rather than something serialized. A
+    // link survives until it is satisfied or one of its ends stops being
+    // connectable at all.
+    var pendingLinks = [];
+
+    // May the walk continue from `a` into `b`, or does `b` end the net? Wire
+    // always continues. So does another cell of the same multi-cell NODE — a
+    // pad is one terminal however many cells it spans, and so is a mux's COM
+    // row. Everything else is where a net stops: two pins of the same mux are
+    // separate nodes and must never read as joined.
+    function passesThrough(a, b) {
+        if (isWireId(cells[b])) return true;
+        const ia = cells[a], ib = cells[b];
+        if (isLed(ia) && isLed(ib)) return true;
+        if (isSwitch(ia) && isSwitch(ib)) return true;
+        if (isToggle(ia) && isToggle(ib)) return true;
+        const ra = roles[a], rb = roles[b];
+        return !!(ra && rb && ra.macro && ra.macro === rb.macro &&
+            ra.kind === 'comMiddle' && rb.kind === 'comMiddle');
+    }
+
+    // Is `to` in the same electrical net as `from`? Walks wire and whole
+    // multi-cell nodes, and enters a cell only through a face that actually
+    // connects — a mux is reachable through its leads and nowhere else.
+    function netReaches(fromIdx, toIdx) {
+        if (fromIdx === toIdx) return true;
+        const seen = new Set([fromIdx]), stack = [fromIdx];
+        while (stack.length) {
+            const ci = stack.pop();
+            const cx = ci % GRID_W, cy = (ci - cx) / GRID_W;
+            for (const [dx, dy] of DIRS) {
+                const nx = cx + dx, ny = cy + dy;
+                if (!inBounds(nx, ny)) continue;
+                const ni = idx(nx, ny);
+                if (seen.has(ni)) continue;
+                if (!cellConnects(cx, cy, [dx, dy]) || !cellConnects(nx, ny, [-dx, -dy])) continue;
+                if (ni === toIdx) return true;
+                seen.add(ni);
+                if (passesThrough(ci, ni)) stack.push(ni);
+            }
+        }
+        return false;
+    }
+
+    function prunePendingLinks() {
+        if (!pendingLinks.length) return;
+        const live = ([a, b]) => {
+            const ax = a % GRID_W, ay = (a - ax) / GRID_W;
+            const bx = b % GRID_W, by = (b - bx) / GRID_W;
+            if (!cellConnects(ax, ay) || !cellConnects(bx, by)) return false; // an end was erased
+            return !netReaches(a, b);                                         // or it got joined
+        };
+        pendingLinks = pendingLinks.filter(live);
+    }
+
+    // Endpoint form for the view, in fractional cells. A mux terminal is
+    // reported at its lead's FACE rather than its cell center, so the line
+    // starts where the connection would actually land instead of floating
+    // inside the package.
+    function pendingLinkList() {
+        const endpoint = (i) => {
+            const x = i % GRID_W, y = (i - i % GRID_W) / GRID_W;
+            const role = roles[i];
+            if (role && role.lead) return [x + role.lead[0] / 2, y + role.lead[1] / 2];
+            return [x, y];
+        };
+        return pendingLinks.map(([a, b]) => [endpoint(a), endpoint(b)]);
     }
 
     // ===== Box mux: the second mux style =====
     //
-    // Six gray pixels in a 3x2 rectangle, touching no gold at all — the whole
+    // Six gray pixels in a solid 3x2 rectangle — the whole
     // device is body, with no control band. It is an unprogrammed part until
     // ONE wire lands on a corner: that single wire is SELECT, and placing it
     // fixes the whole frame, its own role included.
@@ -415,7 +433,7 @@
     // the view draws leads on. Every other face is package.
     //
     // The pin row's middle cell is an inert spacer that holds the sensed
-    // select charge — with no gold cell to keep it in, the select would
+    // select charge — with no cell of its own to keep it in, the select would
     // otherwise have no state, and it is that stored bit that gives the
     // control the same one-tick delay every other signal here has.
     //
@@ -443,24 +461,27 @@
         const rect = { x: minX, y: minY, w, h };
         const perpOut = (d) => (d === 0 ? neg(perp) : perp); // outward from row d
 
-        // ---- What the wiring has settled so far ----
-        // A corner's short-side face is the only one that can say everything
-        // at once, so it is checked first and wins outright. Failing that, a
-        // long side's own faces still pin down the AXIS — which row is COM —
-        // even though nothing yet says which end is NO: a wire at a side's
-        // middle is COM, and a wire at a side's end is a pin, so the far row
-        // is COM. That partial answer is enough to shape the package.
-        let sel = null;
-        for (const d of [0, 1]) {
-            for (const i of [0, 2]) {
-                const out = i === 0 ? neg(along) : along;
-                if (wiredAt(gridAt(i, d), out)) { sel = { i, d, out }; break; }
-            }
-            if (sel) break;
-        }
-        let comD = sel ? sel.d : null;
+        // ---- Which row is COM ----
+        // A wire at the MIDDLE of a long side is unambiguous — that is the
+        // only thing that face can ever be — so it is asked first and settles
+        // the axis outright. That ordering matters for more than tidiness: a
+        // wire routing past the far row's corner on its way somewhere else
+        // also sits on a face that could be read as SELECT, and letting a
+        // corner answer first let such a wire spin the whole part around.
+        // With COM known, the pin row's corners are simply package.
+        //
+        // Failing that, a corner's short-side face is the only other face
+        // that can say everything at once, so it decides next: its own row is
+        // COM. Failing that, a wire at a long side's END says that side holds
+        // a pin, so COM is the far side — the axis, with no select.
+        let comD = null;
+        for (const d of [0, 1]) if (wiredAt(gridAt(1, d), perpOut(d))) { comD = d; break; }
         if (comD === null) {
-            for (const d of [0, 1]) if (wiredAt(gridAt(1, d), perpOut(d))) { comD = d; break; }
+            for (const d of [0, 1]) {
+                if ([0, 2].some((i) => wiredAt(gridAt(i, d), i === 0 ? neg(along) : along))) {
+                    comD = d; break;
+                }
+            }
         }
         if (comD === null) {
             for (const d of [0, 1]) {
@@ -478,6 +499,17 @@
         }
 
         const towardOf = (d) => (d === 0 ? perp : neg(perp)); // COM row -> pin row
+
+        // ---- Which end is SELECT ----
+        // A short-side face of the COM row, and only of the COM row: the pin
+        // row's own corners are package, so a wire elbowing past one is just
+        // a wire. If both COM-row ends are wired the first wins and the other
+        // is an ordinary connection to that end's pin.
+        let sel = null;
+        for (const i of [0, 2]) {
+            const out = i === 0 ? neg(along) : along;
+            if (wiredAt(gridAt(i, comD), out)) { sel = { i, d: comD, out }; break; }
+        }
 
         if (!sel) {
             // Oriented but not yet commissioned: COM and both pins are known
@@ -531,7 +563,6 @@
         // reports its charge on — and only the cells that actually have one
         // report at all. See contribCharge.
         const reportAxis = axisOf(toward[0], toward[1]);
-        const gateAxis = reportAxis;
 
         for (let i = 0; i < 3; i++) {
             const [cx, cy] = at(i, 0);
@@ -552,7 +583,7 @@
                 // COM's gate to a pin is the cell straight across from it;
                 // the middle of the COM row faces the inert select spacer
                 // and so has no gate at all.
-                gates: i === 1 ? [] : [{ pos: at(i, 1), endIsFirst: i === 0, axis: gateAxis, direct: true }],
+                gates: i === 1 ? [] : [{ pos: at(i, 1), endIsFirst: i === 0 }],
                 // Which of this cell's own faces carries a lead, for the view
                 // and for cellConnects: the COM lead on the middle, the SEL
                 // lead on the chosen corner, nothing on the other end.
@@ -567,7 +598,7 @@
             node.ext.push(...ext);
             roles[idx(px, py)] = {
                 kind: 'end', macro, isFirst: i === 0, external: ext, sibs: [], reportAxis,
-                gates: [{ pos: at(i, 0), endIsFirst: i === 0, axis: gateAxis, direct: true }],
+                gates: [{ pos: at(i, 0), endIsFirst: i === 0 }],
                 lead: pinOut,
             };
         }
@@ -597,215 +628,25 @@
         }
     }
 
-    // Probes one perpendicular side of a control band for a valid body: the
-    // single 3-cell row flush against it (a mux is exactly 2x3 — one 3-long
-    // control band + one 3-long body row — the sweet-spot size; arbitrary
-    // widths/depths were more complexity than they were worth).
-    //
-    // An end cell (the NO/NC pin) or the middle COM cell may be a +V/-V
-    // source standing in for the pin (see the source-cell handling in
-    // processGoldBlob) — but a sourced COM excludes sourced ends: with COM
-    // welded to a rail, a sourced end would leave nothing to actually
-    // switch, so that combination reads as a mistake and invalidates the
-    // mux rather than being silently accepted. Every plain-gray body cell
-    // must belong to no other macro and connect to no gray outside the row
-    // — a stray gray flush against the body invalidates the mux instead of
-    // silently deepening it, since deeper bodies no longer exist.
-    function probeBody(rowStart, along, toward, claimedGray) {
-        const grays = [];
-        let endSources = 0, comSource = false;
-        for (let i = 0; i < 3; i++) {
-            const x = rowStart[0] + along[0] * i + toward[0];
-            const y = rowStart[1] + along[1] * i + toward[1];
-            if (!inBounds(x, y)) return false;
-            const id = cells[idx(x, y)];
-            if (id === ID_POS || id === ID_NEG) {
-                if (i === 1) comSource = true; else endSources++;
-                continue;
-            }
-            if (!isGrayId(id) || claimedGray.has(idx(x, y))) return false;
-            grays.push([x, y]);
-        }
-        if (comSource && endSources > 0) return false;
-        // Each gray's connected region must stay within the row's own gray
-        // cells. Regions are per-component: a sourced COM splits the two
-        // (gray) ends into separate single-cell components.
-        const graySet = new Set(grays.map(([x, y]) => idx(x, y)));
-        const free = (x, y) => inBounds(x, y) && isGrayId(cells[idx(x, y)]) && !claimedGray.has(idx(x, y));
-        const visited = new Set();
-        for (const [gx, gy] of grays) {
-            if (visited.has(idx(gx, gy))) continue;
-            const region = floodFill(gx, gy, free, visited);
-            if (!region.every(([x, y]) => graySet.has(idx(x, y)))) return false;
-        }
-        return true;
-    }
-
-    function processGoldBlob(blob, claimedGray) {
-        const xs = blob.map(c => c[0]), ys = blob.map(c => c[1]);
-        const minX = Math.min(...xs), maxX = Math.max(...xs);
-        const minY = Math.min(...ys), maxY = Math.max(...ys);
-        const w = maxX - minX + 1, h = maxY - minY + 1;
-        const isRect = blob.length === w * h;
-
-        // Gold with no adjacent body at all is an isolated +V source; it only
-        // reads as an incomplete mux fragment once it touches gray without
-        // forming a valid one (handled below).
-        const touchesGray = blob.some(([bx, by]) => DIRS.some(([dx, dy]) => isGrayId(getCell(bx + dx, by + dy))));
-        if (!touchesGray) {
-            markBlob(blob, 'isolatedGold');
-            return;
-        }
-
-        if (!isRect || !((h === 1 && w === 3) || (w === 1 && h === 3))) {
-            markBlob(blob, 'invalidGold');
-            return;
-        }
-
-        const horizontal = h === 1;
-        const along = horizontal ? [1, 0] : [0, 1];
-        const rowStart = [minX, minY]; // control band's first (i=0) pixel
-
-        // Try the body row on either perpendicular side.
-        const perpOptions = horizontal ? [[0, -1], [0, 1]] : [[-1, 0], [1, 0]];
-        const toward = perpOptions.find((p) => probeBody(rowStart, along, p, claimedGray)) || null;
-        if (!toward) {
-            markBlob(blob, 'invalidGold');
-            return;
-        }
-
-        const macro = {
-            key: `${rowStart[0]},${rowStart[1]},${along[0]},${along[1]},${toward[0]},${toward[1]}`,
-            rowStart, along, toward,
-            firstCorner: [rowStart[0], rowStart[1]],
-            lastCorner: [rowStart[0] + along[0] * 2, rowStart[1] + along[1] * 2],
-            // The body's three electrical nodes (first end, COM, last end):
-            // cell positions and external contact specs. Node charges are
-            // computed at this level each tick (the proven tile-mux
-            // algorithm); cells only animate toward their node value.
-            nodes: {
-                first: { cells: [], ext: [] },
-                com: { cells: [], ext: [] },
-                last: { cells: [], ext: [] },
-            },
-        };
-        // Macro-local coords: i along the band (0..2), d away from it
-        // (0 = control band, 1 = the body row).
-        const posAt = (i, d) => [rowStart[0] + along[0] * i + toward[0] * d, rowStart[1] + along[1] * i + toward[1] * d];
-
-        for (let i = 0; i < 3; i++) {
-            const [cx, cy] = posAt(i, 0);
-            if (i === 1) { roles[idx(cx, cy)] = { kind: 'midSpacer', macro }; continue; }
-            const isFirst = i === 0;
-            // -along/along points outward along the row; -toward points away from body.
-            const outAlong = isFirst ? [-along[0], -along[1]] : [along[0], along[1]];
-            const outToward = [-toward[0], -toward[1]];
-            roles[idx(cx, cy)] = {
-                kind: 'corner',
-                macro,
-                isFirst,
-                externalNeighbors: [
-                    neighborSpec(cx, cy, outAlong[0], outAlong[1]),
-                    neighborSpec(cx, cy, outToward[0], outToward[1]),
-                ],
-                cornerExternalDirs: [outAlong, outToward],
-            };
-        }
-
-        for (let i = 0; i < 3; i++) {
-            const [bx, by] = posAt(i, 1);
-            const isEnd = i !== 1;
-            const node = i === 0 ? macro.nodes.first : i === 1 ? macro.nodes.com : macro.nodes.last;
-            const cid = cells[idx(bx, by)];
-
-            // A body cell may be a +V/-V source standing in for the pin
-            // (end) or for COM itself (see probeBody). It isn't simulated
-            // as a body cell at all — nextState already treats a POS/NEG id
-            // as fixed — so it's registered as one of the node's own
-            // external drivers (exactly as if a real +V/-V cell were wired
-            // directly against it) plus a fixed sourceCharge for
-            // nodeCharge, and gets an endSource/comSource role purely for
-            // the view to render.
-            if (cid === ID_POS || cid === ID_NEG) {
-                node.ext.push([bx, by, AXIS_H]);
-                node.sourceCharge = cid === ID_POS ? ON : FALLING;
-                roles[idx(bx, by)] = isEnd
-                    ? { kind: 'endSource', macro, isFirst: i === 0, positive: cid === ID_POS }
-                    : { kind: 'comSource', macro, positive: cid === ID_POS };
-                continue;
-            }
-
-            node.cells.push([bx, by]);
-            // A body cell's neighbors split into: `external` (out-of-macro
-            // contacts, which feed the node-level charge computation) and
-            // the cross-node gate boundary (end<->COM adjacency, which
-            // seeds the cell-level fill wave — the visible flow).
-            const external = [];
-            const gates = [];
-            for (const [dx, dy] of DIRS) {
-                const nx = bx + dx, ny = by + dy;
-                const ni = (nx - rowStart[0]) * along[0] + (ny - rowStart[1]) * along[1];
-                const nd = (nx - rowStart[0]) * toward[0] + (ny - rowStart[1]) * toward[1];
-                if (ni < 0 || ni > 2 || nd < 0 || nd > 1) {
-                    const spec = neighborSpec(bx, by, dx, dy);
-                    external.push(spec);
-                    node.ext.push(spec);
-                    continue;
-                }
-                if (nd === 0) continue; // control band: no electrical connection to body
-                // The only in-body neighbors left are across the end<->COM
-                // boundary. endIsFirst: which end that boundary belongs to
-                // (the COM cell touches both ends, hence a list).
-                gates.push({ pos: [nx, ny], endIsFirst: isEnd ? i === 0 : ni === 0, axis: axisOf(dx, dy) });
-            }
-            roles[idx(bx, by)] = isEnd
-                ? { kind: 'end', macro, isFirst: i === 0, external, gates }
-                : { kind: 'comMiddle', macro, external, gates };
-            claimedGray.add(idx(bx, by));
-        }
-    }
-
     // ===== Per-tick macro control cache =====
     var macroControlCache = new Map();
     var macroControlCacheTick = -1;
 
-    function isWired(pos, dirs) {
-        for (const [dx, dy] of dirs) {
-            const nx = pos[0] + dx, ny = pos[1] + dy;
-            if (!inBounds(nx, ny)) continue;
-            if (cells[idx(nx, ny)] !== ID_INSULATOR_PLAIN) return true;
-        }
-        return false;
-    }
-
-    // liveIsFirst: which end the drawn control wiring points at — the NO end
-    // in both mux styles, so control ON bridges it and OFF bridges the other
-    // (NC). controlOn: that control's own stored charge, one tick behind its
-    // input wire like every signal here — a band mux keeps it on the live
-    // gold corner, a box mux on its select spacer. activeIsFirst folds the
-    // two together into the single fact the body update needs: which end is
+    // liveIsFirst: which end the select wire points at — the NO end, so
+    // control ON bridges it and OFF bridges the other (NC). controlOn: the
+    // select's own stored charge, one tick behind its input wire like every
+    // signal here, kept on the select spacer. activeIsFirst folds the two
+    // together into the single fact the body update needs: which end is
     // bridged to COM this tick.
     function getMacroControl(macro) {
         if (macroControlCacheTick !== tickCount) { macroControlCache.clear(); macroControlCacheTick = tickCount; }
         let v = macroControlCache.get(macro.key);
         if (v) return v;
-        let liveIsFirst, controlOn;
-        if (macro.kind === 'box') {
-            // Which end is live isn't re-derived from wiring here: the select
-            // corner IS the frame (see buildBoxMux), so it's already decided.
-            liveIsFirst = macro.selIsFirst;
-            const selId = cells[idx(macro.selCell[0], macro.selCell[1])];
-            controlOn = isGrayId(selId) && grayCharge(selId) === ON;
-        } else {
-            const firstRole = roles[idx(macro.firstCorner[0], macro.firstCorner[1])];
-            const lastRole = roles[idx(macro.lastCorner[0], macro.lastCorner[1])];
-            const firstWired = isWired(macro.firstCorner, firstRole.cornerExternalDirs);
-            const lastWired = isWired(macro.lastCorner, lastRole.cornerExternalDirs);
-            liveIsFirst = !(!firstWired && lastWired);
-            const liveCornerPos = liveIsFirst ? macro.firstCorner : macro.lastCorner;
-            const liveId = cells[idx(liveCornerPos[0], liveCornerPos[1])];
-            controlOn = isGoldId(liveId) && goldCharge(liveId) === ON;
-        }
+        // Which end is live isn't re-derived from wiring here: the select
+        // corner IS the frame (see buildBoxMux), so it's already decided.
+        const liveIsFirst = macro.selIsFirst;
+        const selId = cells[idx(macro.selCell[0], macro.selCell[1])];
+        const controlOn = isGrayId(selId) && grayCharge(selId) === ON;
         v = { liveIsFirst, controlOn, activeIsFirst: controlOn ? liveIsFirst : !liveIsFirst };
         macroControlCache.set(macro.key, v);
         return v;
@@ -826,27 +667,21 @@
         if (isSwitch(id)) return switchIsPressed(id) ? ON : FALLING;
         if (isToggle(id)) return toggleIsOn(id) ? ON : FALLING;
         if (isLed(id)) return OFF; // output sink, never drives
-        if (isGoldId(id) || isGrayId(id)) {
+        if (isGrayId(id)) {
             const role = roles[idx(x, y)];
             if (!role) return OFF;
             switch (role.kind) {
-                case 'corner': return goldCharge(id);
                 case 'end': case 'comMiddle':
-                    // A box mux cell reports only on the axis its own lead
-                    // faces, and a cell with no lead reports nothing at all:
-                    // the four leads are the only way in or out. Without
-                    // this a wire laid against the package's plain side
-                    // would read COM's charge straight through the plastic,
-                    // and the select corner — an input — would drive its own
-                    // select line. (A band mux cell has no `reportAxis` and
-                    // is direction-agnostic, as it always was.)
-                    if (role.reportAxis !== undefined) {
-                        return role.reportAxis === axis ? grayCharge(id) : OFF;
-                    }
-                    return grayCharge(id);
-                case 'isolatedGold': return ON;
+                    // A mux cell reports only on the axis its own lead faces,
+                    // and a cell with no lead reports nothing at all: the
+                    // four leads are the only way in or out. Without this a
+                    // wire laid against the package's plain side would read
+                    // COM's charge straight through the plastic, and the
+                    // select corner — an input — would drive its own select
+                    // line.
+                    return role.reportAxis === axis ? grayCharge(id) : OFF;
                 case 'isolatedGray': return FALLING;
-                default: return OFF; // midSpacer, invalidGold/Gray, boxIdle/boxFrame
+                default: return OFF; // boxSel, boxIdle/boxFrame
             }
         }
         return OFF;
@@ -871,19 +706,6 @@
         return makeConductor(nextCharge(cOld, n, e, s, w));
     }
 
-    function nextGold(x, y, id) {
-        const role = roles[idx(x, y)];
-        if (!role) return id;
-        if (role.kind === 'isolatedGold') return id; // fixed +V source, not simulated
-        if (role.kind === 'invalidGold' || role.kind === 'midSpacer') return makeGold(OFF, false);
-        if (role.kind === 'corner') {
-            const c = role.externalNeighbors.map(([nx, ny, axis]) => contribCharge(nx, ny, axis));
-            const newCharge = nextCharge(goldCharge(id), c[0], c[1], OFF, OFF);
-            return makeGold(newCharge, false);
-        }
-        return id;
-    }
-
     // ===== Body node charges (the proven tile-mux algorithm) =====
     //
     // The body's charge TRUTH lives at the level of its three electrical
@@ -902,14 +724,8 @@
 
     // A node's current charge, derived from its cells (ON if any cell is ON,
     // else FALLING if any is falling). Derived rather than stored so it
-    // survives serialize/undo/paste for free. A node with a corner-source
-    // override (see processGoldBlob) reports that fixed value directly
-    // instead — its cells array may even be empty (a depth-1 end entirely
-    // consumed by the source cell), and regardless of depth the override IS
-    // the node's true electrical value, not something to infer from cells
-    // that are themselves only animating toward it.
+    // survives serialize/undo/paste for free.
     function nodeCharge(node) {
-        if (node.sourceCharge !== undefined) return node.sourceCharge;
         let v = OFF;
         for (const [cx, cy] of node.cells) {
             const c = grayCharge(cells[idx(cx, cy)]);
@@ -925,14 +741,9 @@
         if (v) return v;
         const { activeIsFirst } = getMacroControl(macro);
         const first = macro.nodes.first, last = macro.nodes.last, com = macro.nodes.com;
-        // wasActive is tracked on whichever node still has an animated gray
-        // cell — a sourced cell can't hold it. Prefer COM (nextComMiddle
-        // stores activeIsFirst in its otherwise-unused wasActive bit); when
-        // COM itself is a source both ends are guaranteed gray (probeBody
-        // rejects source-COM + source-end), and an end's own bit encodes
-        // the same fact: nextEnd stores isActive, and for the first end
-        // isActive === activeIsFirst.
-        const wasCell = com.cells.length ? com.cells[0] : first.cells[0];
+        // wasActive is tracked on COM, whose middle cell keeps activeIsFirst
+        // in its otherwise-unused wasActive bit (see nextComMiddle).
+        const wasCell = com.cells[0];
         const wasFirstActive = grayWasActive(cells[idx(wasCell[0], wasCell[1])]);
         const justSwitched = wasFirstActive !== activeIsFirst;
         const extIn = (node) => node.ext.map(([nx, ny, axis]) => contribCharge(nx, ny, axis));
@@ -970,24 +781,18 @@
         if (cur === FALLING) return OFF;
         const seedOn = ([nx, ny, axis]) => contribCharge(nx, ny, axis) === ON;
         if (role.external.some(seedOn)) return ON;
-        // Same-node neighbors (a box mux's COM row is three cells; every
-        // band-mux node is a single cell, so this is empty there). Read
-        // directly rather than through contribCharge, which deliberately
-        // reports nothing along a box cell's select axis — and that axis is
-        // exactly the one the COM row's own cells sit on.
+        // Same-node neighbors — COM is a row of three cells. Read directly
+        // rather than through contribCharge, which deliberately reports
+        // nothing along a box cell's select axis, and that axis is exactly
+        // the one the COM row's own cells sit on.
         if (role.sibs && role.sibs.some(([nx, ny]) => grayCharge(cells[idx(nx, ny)]) === ON)) return ON;
         for (const g of role.gates) {
             if (!gateOpen(g)) continue;
-            // Normally contribCharge (not a raw grayCharge read) so a gate
-            // that leads to a source cell (see processGoldBlob) is
-            // recognized too — its id is +V/-V, not gray, but contribCharge
-            // already dispatches on that correctly for every cell type. A
-            // box mux's gates are the exception: both sides are always plain
-            // body, and its cells deliberately report nothing to the outside
-            // except through a lead, so the gate reads across directly.
-            const gc = g.direct ? grayCharge(cells[idx(g.pos[0], g.pos[1])])
-                                : contribCharge(g.pos[0], g.pos[1], g.axis);
-            if (gc === ON) return ON;
+            // Read across directly rather than through contribCharge: both
+            // sides of a gate are always plain body, and a box cell
+            // deliberately reports nothing to the outside except through a
+            // lead — including along the very axis these gates sit on.
+            if (grayCharge(cells[idx(g.pos[0], g.pos[1])]) === ON) return ON;
         }
         return OFF;
     }
@@ -1013,8 +818,8 @@
         return makeGray(charge, body.activeIsFirst);
     }
 
-    // A box mux's select-sense spacer: the stand-in for the band mux's gold
-    // control corner. It drives nothing (contribCharge reports OFF for it)
+    // The select-sense spacer, which is where the select's state lives.
+    // It drives nothing (contribCharge reports OFF for it)
     // and only ever reads the LIVE end's select contact, so wiring both ends
     // leaves the dead one ignored rather than ORed in.
     function nextBoxSel(id, role) {
@@ -1028,7 +833,7 @@
         const role = roles[idx(x, y)];
         if (!role) return id;
         if (role.kind === 'isolatedGray') return id; // fixed -V source, not simulated
-        if (role.kind === 'invalidGray' || role.kind === 'boxIdle' || role.kind === 'boxFrame')
+        if (role.kind === 'boxIdle' || role.kind === 'boxFrame')
             return makeGray(OFF, false); // inert: no orientation, or no select yet
         if (role.kind === 'end') return nextEnd(x, y, id, role);
         if (role.kind === 'comMiddle') return nextComMiddle(x, y, id, role);
@@ -1060,7 +865,6 @@
         if (isConductorId(id) || isXover(id)) return nextConductor(x, y, id);
         if (id === ID_POS || id === ID_NEG || isSwitch(id) || isToggle(id)) return id; // fixed / set by interaction
         if (isLed(id)) return nextLed(x, y, id);
-        if (isGoldId(id)) return nextGold(x, y, id);
         if (isGrayId(id)) return nextGray(x, y, id);
         return id; // insulator (inert)
     }
@@ -1122,6 +926,7 @@
     // starting over doesn't destroy the level's terminals. In the sandbox
     // there are no locks and this is the original full reset.
     function clearGrid() {
+        pendingLinks = [];
         if (anyLocked) {
             for (let i = 0; i < cells.length; i++)
                 if (locked[i] !== 1) cells[i] = ID_INSULATOR_PLAIN;
@@ -1138,7 +943,6 @@
             // Crossovers collapse to a plain conductor; the next tick re-derives
             // the crossover form from geometry.
             if (isConductorId(id) || isXover(id)) cells[i] = makeConductor(OFF);
-            else if (isGoldId(id)) cells[i] = makeGold(OFF, false);
             else if (isGrayId(id)) cells[i] = makeGray(OFF, false);
             else if (isLed(id)) cells[i] = makeLed(OFF);
             else if (isSwitch(id)) cells[i] = ID_SWITCH_OFF;
@@ -1158,7 +962,6 @@
     // the drawing, not a frozen instant of mid-flight charge.
     function stripId(id) {
         if (isConductorId(id) || isXover(id)) return makeConductor(OFF);
-        if (isGoldId(id)) return makeGold(OFF, false);
         if (isGrayId(id)) return makeGray(OFF, false);
         if (isLed(id)) return makeLed(OFF);    // lit state is transient, like charge
         if (isSwitch(id)) return ID_SWITCH_OFF; // pressed state is transient too
@@ -1166,7 +969,11 @@
         return isValidId(id) ? id : ID_INSULATOR_PLAIN;
     }
 
+    // 15-20 are the retired control-band ids (see the id map): inside the
+    // overall range but no longer meaning anything, so they are rejected here
+    // and load as insulator rather than as an unclassifiable cell.
     function isValidId(id) {
+        if (id >= 15 && id <= 20) return false;
         return id === ID_INSULATOR_PLAIN || (id >= ID_CONDUCTOR_BASE && id <= ID_TOGGLE_ON);
     }
 
@@ -1296,7 +1103,7 @@
     // objectAt identifies the movable "object" under a cell at the
     // granularity a user actually thinks in: a whole 2x3 mux macro
     // (including any +V/-V cells standing in for its pins), an isolated or
-    // invalid gold/gray blob, an LED/switch/toggle pad (8-connected,
+    // a -V gray blob, an LED/switch/toggle pad (8-connected,
     // matching how pads light/press as one), a lone +V/-V cell, or — for
     // wires — the straight SEGMENT under the cursor (see wireSegmentAt),
     // not the whole net: rearranging is about nudging one run at a time,
@@ -1317,13 +1124,51 @@
         return out;
     }
 
+    // The mux as one draggable object: its six body cells, plus whatever is
+    // soldered straight onto a lead — a +V/-V pad, or the first cell of the
+    // wire leaving it.
+    //
+    // This is not a convenience. A mux has no stored orientation: which side
+    // is COM, which end is SELECT, which pin is NO — all of it is read back
+    // off what touches its faces. Leave those contacts behind and a dragged
+    // part arrives having forgotten what it was, or worse, re-reads itself
+    // from whatever the re-router happened to lay nearby. Carrying one cell
+    // per lead means the frame travels WITH the part by construction, and
+    // only the long haul back to the rest of each net is left to re-route —
+    // which is exactly what a pending link is for when it cannot.
+    //
+    // A contact shared with a second mux stays put: taking it along would
+    // silently unhook the other part, which is a worse surprise.
     function macroFootprint(macro) {
         const out = [];
         for (let i = 0; i < 3; i++) {
             const gx = macro.rowStart[0] + macro.along[0] * i, gy = macro.rowStart[1] + macro.along[1] * i;
             out.push([gx, gy], [gx + macro.toward[0], gy + macro.toward[1]]);
         }
+        for (const [[cx, cy], [ox, oy]] of macro.leads) {
+            const sx = cx + ox, sy = cy + oy;
+            if (!inBounds(sx, sy)) continue;
+            const id = cells[idx(sx, sy)];
+            const takeable = id === ID_POS || id === ID_NEG ||
+                (isConductorId(id) && !isCrossoverAt(sx, sy));
+            if (!takeable || leadsFacing(sx, sy) > 1) continue;
+            out.push([sx, sy]);
+        }
         return out;
+    }
+
+    // How many mux leads point at this cell — 2 when one pad feeds two parts.
+    // Only leads count, not wires: a pad with a wire on one side and a lead
+    // on the other is still this mux's alone.
+    function leadsFacing(x, y) {
+        let n = 0;
+        for (const [dx, dy] of DIRS) {
+            const nx = x + dx, ny = y + dy;
+            if (!inBounds(nx, ny) || !isGrayId(cells[idx(nx, ny)])) continue;
+            const role = roles[idx(nx, ny)];
+            if (role && role.lead && role.lead[0] === -dx && role.lead[1] === -dy) n++;
+        }
+        return n;
     }
 
     // The wire "object" a click grabs: not the whole 4-connected net (too
@@ -1361,7 +1206,6 @@
         if (role && role.macro) return { kind: 'mux', cells: macroFootprint(role.macro) };
         if (id === ID_POS || id === ID_NEG) return { kind: 'source', cells: [[x, y]] };
         if (isWireId(id)) return { kind: 'wire', cells: wireSegmentAt(x, y) };
-        if (isGoldId(id)) return { kind: 'blob', cells: floodFill(x, y, (nx, ny) => isGoldId(cells[idx(nx, ny)]), new Set()) };
         if (isGrayId(id)) return { kind: 'blob', cells: floodFill(x, y, (nx, ny) => isGrayId(cells[idx(nx, ny)]), new Set()) };
         if (isLed(id)) return { kind: 'pad', cells: flood8(x, y, isLed) };
         if (isSwitch(id)) return { kind: 'pad', cells: flood8(x, y, isSwitch) };
@@ -1408,7 +1252,10 @@
             if (!inBounds(x, y)) continue;
             const i = idx(x, y);
             if (!isWireId(cells[i])) {
-                if (cellConnects(x, y)) terminals.add(i);
+                // Reached from (dx2,dy2), so this cell must connect on the
+                // face pointing back that way — a wire lying against a mux's
+                // package is not attached to it.
+                if (cellConnects(x, y, [-dx2, -dy2])) terminals.add(i);
                 continue;
             }
             if (isCrossoverAt(x, y)) {
@@ -1587,13 +1434,47 @@
     const ROUTE_STEP_COST = 16;  // turn penalty is 1, so length dominates
     const ROUTE_CROSS_COST = 64; // a crossing is legal, but prefer a short detour
     const OPP = (d) => (d + 2) % 4;
+    // How far a route actually had to span, measured on its OWN two ends —
+    // not on the closest pair of cells in the two nets it joins. Those nets
+    // can be long: a seed may sit one cell from a target and still be the
+    // wrong end to start from, and judging the route against THAT distance
+    // condemns every legitimate long haul. What matters is whether this path
+    // wandered between the points it actually connects.
+    function pathSpan(path) {
+        if (!path || !path.length) return 0;
+        const [ax, ay] = path[0], [bx, by] = path[path.length - 1];
+        return Math.abs(ax - bx) + Math.abs(ay - by);
+    }
+    // Tuned so an ordinary detour around one obstacle still routes, while a
+    // lap of the board does not.
+    const ROUTE_SLACK = 3, ROUTE_STRETCH = 1.6;
     function routeNet(seedIdxs, targetSet, netCells, terminalCells, volatileCells) {
         const free = (x, y) => inBounds(x, y) && isInsulatorId(cells[idx(x, y)]);
+        // A mux gets a one-cell berth on EVERY face. All of them say what the
+        // part is: a wire at a long side's middle declares that side COM, at
+        // its end declares a pin, and one on a short side declares SELECT —
+        // which is the end that decides NO from NC. A route grazing any of
+        // them on its way past can spin the part around or swap its pins,
+        // and the short sides are not the harmless case they look like.
+        //
+        // Routes may still END on a terminal: that is the `dOut` direction,
+        // which is never side-checked. Hand-drawing alongside a package stays
+        // legal; this only constrains what the re-router lays down unasked.
+        const bumpsPackage = (x, y) => {
+            if (!isGrayId(cells[idx(x, y)])) return false;
+            const role = roles[idx(x, y)];
+            return !!(role && role.macro);
+        };
         const sidesClear = (x, y, dIn, dOut, allowed) => {
             for (let d = 0; d < 4; d++) {
                 if (d === OPP(dIn) || d === dOut) continue; // where the path came from / goes
                 const nx = x + DIRS[d][0], ny = y + DIRS[d][1];
-                if (!inBounds(nx, ny) || !cellConnects(nx, ny)) continue;
+                if (!inBounds(nx, ny)) continue;
+                if (bumpsPackage(nx, ny) && !allowed.has(idx(nx, ny))) return false;
+                // Deliberately direction-agnostic: a route must not run
+                // flush along ANY terminal it isn't ending on, whichever
+                // face that terminal happens to present.
+                if (!cellConnects(nx, ny)) continue;
                 if (!allowed.has(idx(nx, ny))) return false;
             }
             return true;
@@ -1698,7 +1579,7 @@
     // form (a multi-select drag moves several objects as one rigid piece).
     function moveObject(objCells, dx, dy, quarterTurns) {
         const res = moveObjects([{ cells: objCells }], dx, dy, quarterTurns);
-        return res.ok ? { ok: true, cells: res.objects[0].cells, unrouted: res.unrouted } : res;
+        return res.ok ? { ok: true, cells: res.objects[0].cells, unrouted: res.unrouted, pending: res.pending } : res;
     }
 
     // Move a GROUP as one rigid piece. Everything below is driven by a
@@ -1710,25 +1591,49 @@
     // without their contracts getting confused.
     // Returns {ok, objects:[{cells}] in input order, unrouted}.
     function moveObjects(objectList, dx, dy, quarterTurns) {
-        // Within a mux each cell is its own node — except a box mux's COM
-        // row, whose three cells ARE one node: a wire that comes back flush
-        // against a different one of them than it left is still attached to
-        // the same thing, and must not be trimmed as a stray new contact.
+        // Within a mux each cell is its own node. A box mux's COM row shares
+        // the 'comMiddle' KIND across all three of its cells — the row relaxes
+        // as one for charge — but they are not one terminal: the middle is
+        // COM, one corner is SELECT, and SELECT is an input that must never
+        // read as joined to the output. Keying them together merged the two
+        // contracts, so a re-route for COM was free to land on SELECT's wire
+        // (and then get pruned again, taking COM's connection with it).
+        // Which cell is which comes off the macro, not the kind.
+        //
+        // A carried contact cell (see macroFootprint) belongs to the node of
+        // the lead it is soldered to, not to one of its own. Give it its own
+        // and COM plus COM's own stub read as two nodes touching, which is a
+        // weld — the object would refuse to move at all.
         const muxNodeKey = (x, y) => {
+            for (const [dx2, dy2] of DIRS) {
+                const bx = x + dx2, by = y + dy2;
+                if (!inBounds(bx, by) || !isGrayId(cells[idx(bx, by)])) continue;
+                const br = roles[idx(bx, by)];
+                if (br && br.macro && br.lead && br.lead[0] === -dx2 && br.lead[1] === -dy2)
+                    return muxNodeKey(bx, by);
+            }
             const r = roles[idx(x, y)];
-            if (r && r.macro && r.macro.kind === 'box' && r.kind === 'comMiddle') return 'm' + r.macro.key + '|com';
+            const m = r && r.macro;
+            if (m && m.kind === 'box' && r.kind === 'comMiddle' && m.comCell[0] === x && m.comCell[1] === y)
+                return 'm' + m.key + '|com';
             return 'm' + idx(x, y);
         };
-        const objCells = [], nodeKeys = [];
+        // A mux carries its contact cells (see macroFootprint), so selecting a
+        // mux AND the wire running off it legitimately names the same cell
+        // twice. The first claim wins — grabbing a mux and its own feed should
+        // move both, not report an overlap — and only a cell claimed twice by
+        // objects that both really want it is a genuine conflict, which cannot
+        // happen once duplicates collapse.
+        const objCells = [], nodeKeys = [], objSet = new Set();
         objectList.forEach((o, oi) => {
             const isMux = o.cells.some(([x, y]) => { const r = roles[idx(x, y)]; return r && r.macro; });
             for (const [x, y] of o.cells) {
+                if (objSet.has(idx(x, y))) continue;
+                objSet.add(idx(x, y));
                 objCells.push([x, y]);
                 nodeKeys.push(isMux ? muxNodeKey(x, y) : 'o' + oi);
             }
         });
-        const objSet = new Set(objCells.map(([x, y]) => idx(x, y)));
-        if (objSet.size !== objCells.length) return { ok: false }; // overlapping picks
         // A level's fixed I/O pad is not draggable, and nothing may be dropped
         // onto one. (Re-routing can't hit a locked cell on its own: the router
         // only lays wire through insulator, and a locked cell always holds a
@@ -1749,6 +1654,31 @@
         // bookkeeping.
         const savedCells = cells.slice();
         const reject = (why) => { cells.set(savedCells); recomputeRoles(); return { ok: false, reason: why || 'blocked' }; };
+        // What every mux cell on the board currently is. A mux's connections
+        // are integral to its identity — a wire against the middle of a long
+        // side declares that side COM (see buildBoxMux) — so a drag that
+        // parks a part where something re-reads it is refused rather than
+        // silently spinning it around. Checked after the move lands, since
+        // that is the only point the new reading exists. Covers stationary
+        // muxes too: sliding one part past another must not re-read either.
+        // Kind alone is not identity. A mux's six cells keep the same kinds
+        // when the frame flips end-for-end — three comMiddle, two end, one
+        // boxSel, whichever end SELECT is on — so which FACE each cell
+        // connects through has to be part of the snapshot too. That is what
+        // catches a move that hands SELECT to the opposite corner and quietly
+        // swaps NO for NC.
+        const muxRoleBefore = new Map();
+        for (let i = 0; i < cells.length; i++) {
+            const r = roles[i];
+            if (r && r.macro) muxRoleBefore.set(i, { kind: r.kind, lead: r.lead || null });
+        }
+        // The object itself may be turning, so a lead is expected to turn with
+        // it. 90° CW in screen coordinates (y down) is (dx,dy) -> (-dy,dx).
+        const turnLead = (lead, turns) => {
+            let [dx, dy] = lead;
+            for (let t = ((turns % 4) + 4) % 4; t > 0; t--) { const nx = -dy; dy = dx; dx = nx; }
+            return [dx, dy];
+        };
 
         // Raw contacts, collected against the pre-move grid.
         const contacts = [];
@@ -1756,10 +1686,27 @@
             if (!cellConnects(cx, cy)) continue;
             for (const [ddx, ddy] of DIRS) {
                 const ax = cx + ddx, ay = cy + ddy;
-                if (!inBounds(ax, ay) || objSet.has(idx(ax, ay)) || !cellConnects(ax, ay)) continue;
+                // Both ends are asked about the face they actually meet on,
+                // so a wire merely sitting beside a box mux's package is not
+                // recorded as a contact and then dragged along by it.
+                if (!inBounds(ax, ay) || objSet.has(idx(ax, ay))) continue;
+                if (!cellConnects(cx, cy, [ddx, ddy]) || !cellConnects(ax, ay, [-ddx, -ddy])) continue;
                 contacts.push({ anchor: [ax, ay], objCell: [cx, cy], entry: [ddx, ddy] });
             }
         }
+
+        // What each contact actually has to keep reaching. The immediate
+        // neighbour is not the point — it usually survives, still touching,
+        // while the terminal at the FAR end of its net quietly comes adrift.
+        // So walk each anchor's net now and remember the terminals, then
+        // re-check those after the move. This is what catches a connection
+        // lost to the shrink pass or to a route that satisfied a different
+        // contract; the router's own `unrouted` count sees none of it.
+        const contactTerminals = contacts.map((c) => {
+            const net = floodNet(c.anchor[0], c.anchor[1], c.entry[0], c.entry[1]);
+            const ts = [...net.terminals].filter((t) => !objSet.has(t));
+            return { objCell: idx(c.objCell[0], c.objCell[1]), terminals: ts };
+        });
 
         const moved = transformObjectCells(objCells, dx, dy, quarterTurns);
         const movedSet = new Set(moved.map(([x, y]) => idx(x, y)));
@@ -1772,8 +1719,24 @@
         const capableMoved = new Set();
         objCells.forEach(([x, y], i) => {
             const r = roles[idx(x, y)];
-            if (!r || (r.kind !== 'midSpacer' && r.kind !== 'boxSel')) capableMoved.add(idx(moved[i][0], moved[i][1]));
+            if (!r || r.kind !== 'boxSel') capableMoved.add(idx(moved[i][0], moved[i][1]));
         });
+        // Which pairs of the object's own cells already touch, captured on the
+        // pre-move grid. A rigid move preserves them, so a pair that touches
+        // afterwards and is in here is not a new connection — it is the same
+        // one, carried along. Only a pair NOT in here is a weld.
+        const joinedBefore = new Set();
+        for (const [cx, cy] of objCells) {
+            for (const [ddx, ddy] of DIRS) {
+                const nx = cx + ddx, ny = cy + ddy;
+                if (!inBounds(nx, ny) || !objSet.has(idx(nx, ny))) continue;
+                if (!cellConnects(cx, cy, [ddx, ddy]) || !cellConnects(nx, ny, [-ddx, -ddy])) continue;
+                const a = idx(cx, cy), b = idx(nx, ny);
+                joinedBefore.add(Math.min(a, b) + ':' + Math.max(a, b));
+            }
+        }
+        const origOfMoved = new Map();
+        objCells.forEach(([x, y], i) => origOfMoved.set(idx(moved[i][0], moved[i][1]), idx(x, y)));
 
         // Cells belonging to one electrical node share an id, so the shrink
         // pass can tell "these two are already joined" from "these two need
@@ -1895,7 +1858,21 @@
             if (!cellConnects(mx, my)) continue;
             for (const [ddx, ddy] of DIRS) {
                 const nx = mx + ddx, ny = my + ddy;
-                if (!inBounds(nx, ny) || movedSet.has(idx(nx, ny)) || !cellConnects(nx, ny)) continue;
+                if (!inBounds(nx, ny)) continue;
+                if (!cellConnects(mx, my, [ddx, ddy]) || !cellConnects(nx, ny, [-ddx, -ddy])) continue;
+                // Two cells that both moved: fine if they are the same node
+                // (a pad's own cells, a mux's COM row), a weld if they are
+                // not. A mux carries a contact stub per lead now, and a turn
+                // can bring two of them together — which would short SELECT
+                // to COM without either ever touching anything stationary,
+                // the one way past the check below.
+                if (movedSet.has(idx(nx, ny))) {
+                    if (nodeOfMoved.get(mi) === nodeOfMoved.get(idx(nx, ny))) continue;
+                    const a = origOfMoved.get(mi), b = origOfMoved.get(idx(nx, ny));
+                    if (a !== undefined && b !== undefined &&
+                        joinedBefore.has(Math.min(a, b) + ':' + Math.max(a, b))) continue;
+                    return reject('welded');
+                }
                 if (!components.has(nodeKeyAt(nx, ny))) return reject();
             }
         }
@@ -1927,7 +1904,7 @@
                 const [x, y, dx2, dy2] = stack.pop();
                 if (!inBounds(x, y)) continue;
                 const i = idx(x, y);
-                if (!isWireId(cells[i])) { if (cellConnects(x, y)) touched.add(i); continue; }
+                if (!isWireId(cells[i])) { if (cellConnects(x, y, [-dx2, -dy2])) touched.add(i); continue; }
                 if (isCrossoverAt(x, y)) {
                     const k = i + (dx2 !== 0 ? 'h' : 'v');
                     if (seen.has(k)) continue;
@@ -1965,8 +1942,25 @@
                 const island = floodFrom([from]);
                 const seeds = [...island.wires, from].filter((ci) => !isCrossoverAt(ci % GRID_W, Math.floor(ci / GRID_W)));
                 const targetCells = new Set([...at.wires, ...c.targets]);
-                const path = routeNet(seeds, targetCells, new Set(seeds), comp.terminals, volatileCells);
-                if (!path) { unrouted++; comp.failed = true; break; }
+                let path = routeNet(seeds, targetCells, new Set(seeds), comp.terminals, volatileCells);
+                // A route is only worth taking if it looks like the connection
+                // it replaces. On a tight board the shortest LEGAL path can be
+                // a lap of the whole layout — a path may not run flush beside
+                // anything, so it detours around every net it meets — and
+                // snaking twenty cells to rejoin something two away is not
+                // what the user asked for by dragging a part. Past that, the
+                // honest answer is a dashed link: the connection is owed, and
+                // they can draw it where they actually want it.
+                if (path && path.length > ROUTE_SLACK + ROUTE_STRETCH * pathSpan(path)) path = null;
+                if (!path) {
+                    // Which two things this contract failed to join. The
+                    // immediate contact next door is often still touching —
+                    // what got orphaned is the terminal at the far end of the
+                    // net, which is what the dashed line has to point at.
+                    unrouted++; comp.failed = true;
+                    owedPairs.push([from, [...c.targets][0]]);
+                    break;
+                }
                 for (const [px, py] of path) {
                     cells[idx(px, py)] = makeConductor(OFF);
                     comp.routed.add(idx(px, py));
@@ -1988,21 +1982,13 @@
             }
             return n;
         };
+        const owedPairs = [];
         const contractList = [...contracts.values()];
         const orders = [
             [...contractList].sort((p, q) => approachRoom(p) - approachRoom(q)),
             contractList,
             [...contractList].reverse(),
         ];
-        const preRoute = cells.slice();
-        for (const order of orders) {
-            cells.set(preRoute);
-            for (const comp of components.values()) { comp.routed.clear(); comp.failed = false; }
-            unrouted = 0;
-            for (const c of order) runContract(c);
-            if (!unrouted) break;
-        }
-
         // Shrink: erase whatever the move left leading nowhere — the tail of
         // a run a component was dragged along, the far end of a wire whose
         // middle got absorbed. Without this a drag "into" a wire strands the
@@ -2010,32 +1996,121 @@
         // that moved. The object's own cells and pre-existing dangles are
         // kept, and a net whose contract couldn't be re-routed is left
         // untouched rather than made worse.
-        for (const comp of components.values()) {
-            if (comp.failed) continue;
-            // Only wire is prunable; a component's own non-wire cells (the
-            // pin or pad it stands for) are things the net must stay on.
-            const net = new Set(), required = new Set(capableMoved);
-            for (const ci of comp.cells) (isWireId(cells[ci]) ? net : required).add(ci);
-            for (const ci of comp.routed) net.add(ci);
-            for (const t of comp.terminals) required.add(t);
-            const keep = new Set([...(comp.preDangling || []), ...movedSet]);
-            for (const ci of reduceNet(net, required, keep, nodeIdFor(nodeOfMoved))) {
-                if (isWireId(cells[ci])) cells[ci] = ID_INSULATOR_PLAIN;
+        const shrinkNets = () => {
+            for (const comp of components.values()) {
+                if (comp.failed) continue;
+                // Only wire is prunable; a component's own non-wire cells (the
+                // pin or pad it stands for) are things the net must stay on.
+                const net = new Set(), required = new Set(capableMoved);
+                for (const ci of comp.cells) (isWireId(cells[ci]) ? net : required).add(ci);
+                for (const ci of comp.routed) net.add(ci);
+                for (const t of comp.terminals) required.add(t);
+                const keep = new Set([...(comp.preDangling || []), ...movedSet]);
+                for (const ci of reduceNet(net, required, keep, nodeIdFor(nodeOfMoved))) {
+                    if (!isWireId(cells[ci])) continue;
+                    cells[ci] = ID_INSULATOR_PLAIN;
+                    // Keep the bookkeeping honest: a cell that is gone must
+                    // not come back as a "required" anchor on a later pass.
+                    comp.cells.delete(ci);
+                    comp.routed.delete(ci);
+                }
             }
+        };
+        const preRoute = cells.slice();
+        const preCompCells = new Map([...components].map(([k, c]) => [k, new Set(c.cells)]));
+        for (const order of orders) {
+            cells.set(preRoute);
+            for (const [k, comp] of components) {
+                comp.routed.clear(); comp.failed = false; comp.cells = new Set(preCompCells.get(k));
+            }
+            unrouted = 0;
+            owedPairs.length = 0;
+            for (const c of order) runContract(c);
+            if (unrouted) {
+                // Second chance. Routes are laid before the shrink, so a
+                // contract can fail against wire that is only still there
+                // because nothing has cleaned it up yet — the run that led to
+                // where the part WAS, lying across the corridor the part now
+                // needs. Tidy the nets that did get through (the failed ones
+                // are skipped, as always) and retry the rest against the
+                // board as it will actually end up.
+                shrinkNets();
+                const retry = [];
+                for (const c of order) {
+                    const comp = components.get(c.compKey);
+                    if (!comp.failed) continue;
+                    comp.failed = false;
+                    retry.push(c);
+                }
+                unrouted = 0;
+                owedPairs.length = 0;
+                for (const c of retry) runContract(c);
+            }
+            if (!unrouted) break;
         }
-        // A move that cannot keep every connection is not done at all. The
-        // alternative — completing it and reporting the breakage — leaves the
-        // user with a circuit that is quietly wrong, which is precisely what
-        // rotating a well-connected mux used to do. Refusing means a drag
-        // simply sticks at the last position where everything still fits,
-        // the same behaviour a collision already has.
-        if (unrouted) return reject('unroutable');
-
+        shrinkNets();
         recomputeRoles();
+        // Identity is not negotiable the way routing is: a part that ends up
+        // reading as something else is not the part you dragged, so that one
+        // still refuses outright.
+        for (const [before, was] of muxRoleBefore) {
+            const moved = newIdxOf.has(before);
+            const r = roles[moved ? newIdxOf.get(before) : before];
+            if (!r || r.kind !== was.kind) return reject('reread');
+            // A stationary mux keeps its leads pointing where they were; a
+            // moved one turns them with the object.
+            const want = was.lead && moved ? turnLead(was.lead, quarterTurns) : was.lead;
+            const got = r.lead || null;
+            if (!want !== !got) return reject('reread');
+            if (want && (want[0] !== got[0] || want[1] !== got[1])) return reject('reread');
+        }
+
+        // Every connection the object had, re-checked against the finished
+        // board rather than taken on trust from the router's own count. That
+        // count only knows about routes it was asked for and failed; it says
+        // nothing about a connection lost to the shrink pass or to a contact
+        // that looked already-satisfied. Whatever did not survive is owed,
+        // and becomes a dashed line instead of vanishing silently.
+        const owed = new Map();
+        // The two sources below name the same broken connection by different
+        // cells — the router reports the mux PIN it could not reach, the
+        // terminal re-check reports the little stub soldered onto that pin
+        // and dragged along with it. Both are the same node, so a link is
+        // filed under the lead it lands on: one dashed line per connection,
+        // anchored on the package edge rather than floating out at the stub.
+        const solderedTo = (ci) => {
+            const x = ci % GRID_W, y = (ci - x) / GRID_W;
+            for (const [ddx, ddy] of DIRS) {
+                const bx = x + ddx, by = y + ddy;
+                if (!inBounds(bx, by) || !isGrayId(cells[idx(bx, by)])) continue;
+                const br = roles[idx(bx, by)];
+                if (br && br.macro && br.lead && br.lead[0] === -ddx && br.lead[1] === -ddy) return idx(bx, by);
+            }
+            return ci;
+        };
+        const oweLink = (a, b) => {
+            if (a === undefined || b === undefined) return;
+            const a2 = solderedTo(newIdxOf.has(a) ? newIdxOf.get(a) : a);
+            const b2 = solderedTo(newIdxOf.has(b) ? newIdxOf.get(b) : b);
+            if (a2 === b2 || netReaches(a2, b2)) return;
+            const ax = a2 % GRID_W, ay = (a2 - ax) / GRID_W;
+            const bx = b2 % GRID_W, by = (b2 - bx) / GRID_W;
+            if (!cellConnects(ax, ay) || !cellConnects(bx, by)) return; // an end was erased
+            owed.set(Math.min(a2, b2) + ':' + Math.max(a2, b2), [a2, b2]);
+        };
+        // What the router itself reported it could not join, re-checked in
+        // case another contract's path happened to satisfy it anyway.
+        for (const [a, b] of owedPairs) oweLink(a, b);
+        for (const ct of contactTerminals) {
+            if (!newIdxOf.has(ct.objCell)) continue;
+            for (const t0 of ct.terminals) oweLink(ct.objCell, t0);
+        }
+        for (const link of owed.values()) pendingLinks.push(link);
+
         const out = [];
         let at = 0;
         for (const o of objectList) { out.push({ cells: moved.slice(at, at + o.cells.length) }); at += o.cells.length; }
-        return { ok: true, objects: out, cells: moved, unrouted };
+        return { ok: true, objects: out, cells: moved, unrouted, pending: [...owed.values()].length };
     }
 
     function serialize() {
@@ -2079,7 +2154,7 @@
         isInsulatorId,
         isConductorId, conductorCharge,
         isXover, xoverV, xoverH, isCrossoverAt, cellConnects,
-        isGoldId, goldCharge,
+        pendingLinks: pendingLinkList,
         isGrayId, grayCharge,
         isLed, ledIsOn, isSwitch, switchIsPressed, isToggle, toggleIsOn,
         ID_POS, ID_NEG,

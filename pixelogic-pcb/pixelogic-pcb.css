@@ -2,7 +2,7 @@
     --pcb-insulator: #0d3b0d;
     --pcb-conductor: #3fae4a;
     --pcb-gray: #2b2b2b;
-    --pcb-gold: #e6b800;
+    --pcb-accent: #e6b800;
     --panel-bg: #1a1a1a;
     --panel-border: #333;
     --btn-bg: #262626;
@@ -591,7 +591,7 @@ html, body {
 .level-hint.open, .level-result.open { display: block; }
 .level-hint {
     color: var(--text-dim);
-    border-left: 2px solid var(--pcb-gold);
+    border-left: 2px solid var(--pcb-accent);
     padding-left: 8px;
 }
 

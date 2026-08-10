@@ -11,7 +11,7 @@
     let gameProgress = G.loadProgress();
 
     // drawMode is one of the four paint colors, 'select', or 'paste'.
-    const PAINT_MODES = ['conductor', 'gold', 'gray', 'insulator'];
+    const PAINT_MODES = ['conductor', 'gray', 'insulator'];
     // How far (in screen px) a press-and-hold in Interact must move before
     // it's read as "pan the view" instead of "hold this switch/toggle".
     const INTERACT_PAN_THRESHOLD = 8;
@@ -465,21 +465,27 @@
             (Math.max(Math.abs(a[0]), Math.abs(a[1])) - Math.max(Math.abs(b[0]), Math.abs(b[1]))) ||
             (Math.abs(a[0]) + Math.abs(a[1]) - (Math.abs(b[0]) + Math.abs(b[1]))));
     }
-    // Try a move, falling back to nearby offsets when it won't fit.
+    // Try a move, falling back to nearby offsets when it won't fit. Reports
+    // where it actually landed, so a drag can remember that rather than the
+    // spot the pointer asked for and did not get.
     function moveWithNudge(objs, dx, dy, rot, radius) {
         for (const [ox, oy] of nudgeOffsets(radius)) {
             const res = M.moveObjects(objs, dx + ox, dy + oy, rot);
-            if (res.ok) return { res, nudged: ox !== 0 || oy !== 0 };
+            if (res.ok) return { res, nudged: ox !== 0 || oy !== 0, at: { dx: dx + ox, dy: dy + oy, rot } };
         }
-        return { res: { ok: false }, nudged: false };
+        return { res: { ok: false }, nudged: false, at: null };
     }
 
     function clearLongPress() {
         if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
     }
 
+    // A connection the move could not keep is not lost — it is drawn as a
+    // dashed line to whatever it should still reach, so say that rather than
+    // just reporting a number.
     function flashUnrouted(n) {
-        if (n) flashStatus(n === 1 ? '1 connection could not be rerouted' : `${n} connections could not be rerouted`);
+        if (n) flashStatus(n === 1 ? '1 connection left dashed — draw it to finish'
+            : `${n} connections left dashed — draw them to finish`);
     }
 
     function restampArrange() {
@@ -489,16 +495,27 @@
         // shouldn't leave a no-op undo step), and only right after the base
         // restore, so the snapshot it captures is exactly the pre-drag grid.
         if (!a.moved) { beginUndoBatch(); a.moved = true; }
-        // A small nudge only when the exact spot won't take it — enough to
-        // let a mid-drag rotation land, without the object wandering off the
-        // pointer whenever it fits where it is asked to go.
+        // When the exact spot won't take it, look outward for the nearest one
+        // that will. `nudgeOffsets` is ordered by ring, so the first hit IS
+        // the nearest, which is where the object should sit — following the
+        // pointer as closely as the board allows. Snapping back to where the
+        // drag last happened to fit (or worse, to where it started) threw away
+        // everything the user had dragged past.
         let res = M.moveObjects(a.objs, a.dx, a.dy, a.rot);
-        if (!res.ok) res = moveWithNudge(a.objs, a.dx, a.dy, a.rot, 1).res;
-        if (res.ok) a.last = { dx: a.dx, dy: a.dy, rot: a.rot };
-        else res = M.moveObjects(a.objs, a.last.dx, a.last.dy, a.last.rot); // blocked: stay at the last spot that fit
-        a.cur = res.objects;
-        a.unrouted = res.unrouted || 0;
-        setArrangeSel(a.cur);
+        let nudge = null;
+        if (!res.ok) { nudge = moveWithNudge(a.objs, a.dx, a.dy, a.rot, 3); res = nudge.res; }
+        if (res.ok) a.last = nudge && nudge.at ? nudge.at : { dx: a.dx, dy: a.dy, rot: a.rot };
+        else if (a.last) res = M.moveObjects(a.objs, a.last.dx, a.last.dy, a.last.rot); // nothing nearby fits
+        // Nothing has fit yet — the drag just hasn't found a legal spot. The
+        // grid is already back at its pre-drag state from the restore above,
+        // so leave the selection where it was rather than reading cells off a
+        // refusal.
+        if (res.ok) {
+            a.cur = res.objects;
+            a.unrouted = res.unrouted || 0;
+            a.pending = res.pending || 0;
+            setArrangeSel(a.cur);
+        }
         V.drawGrid();
     }
 
@@ -507,12 +524,14 @@
         const a = arrange;
         arrange = null;
         if (!a.moved) return; // plain click: the object just stays selected
-        const noop = a.last.dx === 0 && a.last.dy === 0 && a.last.rot % 4 === 0;
+        // a.last is unset when no offset the drag tried would fit: the grid is
+        // already back where it started, so this is a no-op like any other.
+        const noop = !a.last || (a.last.dx === 0 && a.last.dy === 0 && a.last.rot % 4 === 0);
         endUndoBatch();
         if (noop) { undoStack.pop(); updateActionButtons(); return; } // drag ended back where it started
         const g = applyExpansion(); // dropped on the border: grow to keep the 1-cell margin
         setArrangeSel(selFromMoved(a.cur, g));
-        flashUnrouted(a.unrouted);
+        flashUnrouted(a.pending || a.unrouted);
         afterEdit();
     }
 
@@ -1288,13 +1307,12 @@
         // reaching for wire.
         else if (e.key === '1') setDrawMode('conductor');
         else if (e.key === '2') setDrawMode('insulator');
-        else if (e.key === '3') setDrawMode('gold');
-        else if (e.key === '4') setDrawMode('gray');
-        else if (e.key === '5') setDrawMode('pos');
-        else if (e.key === '6') setDrawMode('neg');
-        else if (e.key === '7') setDrawMode('led');
-        else if (e.key === '8') setDrawMode('toggle');
-        else if (e.key === '9') setDrawMode('switch');
+        else if (e.key === '3') setDrawMode('gray');
+        else if (e.key === '4') setDrawMode('pos');
+        else if (e.key === '5') setDrawMode('neg');
+        else if (e.key === '6') setDrawMode('led');
+        else if (e.key === '7') setDrawMode('toggle');
+        else if (e.key === '8') setDrawMode('switch');
         else if (e.key === 'i' || e.key === 'I') setDrawMode('interact');
         else if (e.key === 's' || e.key === 'S') setDrawMode('select');
         else if (e.key === 'a' || e.key === 'A') setDrawMode('rearrange');

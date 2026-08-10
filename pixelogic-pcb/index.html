@@ -15,7 +15,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Pixelogic">
     <link rel="apple-touch-icon" href="icon-192.png">
-    <link rel="icon" type="image/png" href="icon-192.png">
+    <!-- The tab icon is its own render, not the launcher icon scaled down:
+         at 16px the traces and the leads turn to mush, so the favicon is the
+         package on its own. See scripts/generate-icons.js. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+    <link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
 
     <link rel="stylesheet" href="pixelogic-pcb.css">
 </head>
@@ -57,21 +61,19 @@
                         title="Conductor (1) — right-drag always erases" style="--swatch:#3fae4a">Conductor</button>
                     <button class="tool-btn swatch-tool" data-tool="insulator" data-key="2"
                         title="Erase / Insulator (2)" style="--swatch:#0d3b0d">Erase</button>
-                    <button class="tool-btn swatch-tool" data-tool="gold" data-key="3" title="Mux control band (3)"
-                        style="--swatch:#e6b800">MUX Control</button>
-                    <button class="tool-btn swatch-tool" data-tool="gray" data-key="4"
-                        title="Mux body band (4) — a body row against a control band is a mux; a solid 3x2 of body on its own is a box mux — a blank package until you wire it. A wire on a long side sets the orientation (middle of a side is COM, end of one is a pin). A wire on a corner is SELECT and commissions it: that corner's row is COM (out its middle), the far row's ends are the pins, and that end is NO"
-                        style="--swatch:#2b2b2b">MUX Body</button>
-                    <button class="tool-btn swatch-tool" data-tool="pos" data-key="5" title="+V source (5)"
+                    <button class="tool-btn swatch-tool" data-tool="gray" data-key="3"
+                        title="MUX (3) — draw a solid 3x2 of it and you have a mux: a blank package until you wire it. The middle of a long side is always COM; the end of one is a pin. A wire on a corner of the COM row is SELECT and commissions it: the far row's ends are the pins, and that end is NO. Everything else is package, so wires can run alongside. Any other shape of it is a &minus;V pad"
+                        style="--swatch:#2b2b2b">MUX</button>
+                    <button class="tool-btn swatch-tool" data-tool="pos" data-key="4" title="+V source (4)"
                         style="--swatch:#ffffff">+V</button>
-                    <button class="tool-btn swatch-tool" data-tool="neg" data-key="6" title="&minus;V source (6)"
+                    <button class="tool-btn swatch-tool" data-tool="neg" data-key="5" title="&minus;V source (5)"
                         style="--swatch:#000000">&minus;V</button>
-                    <button class="tool-btn swatch-tool" data-tool="led" data-key="7" title="LED output (7)"
+                    <button class="tool-btn swatch-tool" data-tool="led" data-key="6" title="LED output (6)"
                         style="--swatch:#ff2a2a">LED</button>
-                    <button class="tool-btn swatch-tool" data-tool="toggle" data-key="8" title="Toggle switch input (8)"
+                    <button class="tool-btn swatch-tool" data-tool="toggle" data-key="7" title="Toggle switch input (7)"
                         style="--swatch:#565b60">Toggle</button>
-                    <button class="tool-btn swatch-tool" data-tool="switch" data-key="9"
-                        title="Momentary switch input (9)" style="--swatch:#9aa0a6">Switch</button>
+                    <button class="tool-btn swatch-tool" data-tool="switch" data-key="8"
+                        title="Momentary switch input (8)" style="--swatch:#9aa0a6">Switch</button>
                 </div>
 
                 <div class="tool-group" aria-label="Modes">

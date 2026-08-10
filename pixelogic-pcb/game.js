@@ -120,21 +120,21 @@
             brief: 'Light the lamp when the switch is OFF, and only then. This one needs '
                 + 'the part everything else is built from: a mux.',
             steps: [
-                'Draw a <b>MUX Control</b> (<b>3</b>) bar exactly 3 cells long.',
-                'Tap <b>MUX Body</b> (<b>4</b>) once against the side of it — the '
-                + 'whole 3-cell body row fills in, and you have a mux.',
-                'The body\'s middle cell is <b>COM</b>, the output. The two end cells '
-                + 'are the pins it switches between. Only the two <b>corners</b> of '
-                + 'the gold bar take a wire; whichever corner you wire is the one '
-                + 'selected when the control is ON.',
-                'Paint <b>−V</b> (<b>6</b>) on the pin behind the corner you wired, '
-                + 'and <b>+V</b> (<b>5</b>) on the other. Now control ON pulls COM '
-                + 'down and control OFF drives it high.',
-                'Wire <b>A</b> to that corner and <b>COM</b> to <b>Q</b>.',
+                'Draw a solid <b>3&times;2</b> block of <b>MUX</b> (<b>3</b>). That is '
+                + 'the whole part — a blank package until you wire it.',
+                'Wire the <b>middle</b> of one long side. That side is <b>COM</b>, the '
+                + 'output. The two <b>ends of the far side</b> are the pins it switches '
+                + 'between.',
+                'Wire a <b>corner</b> of the COM side: that is <b>SELECT</b>. The pin '
+                + 'diagonally across from it is bridged to COM when SELECT is ON, and '
+                + 'the other pin when it is OFF.',
+                'Put <b>−V</b> (<b>5</b>) against the first pin and <b>+V</b> (<b>4</b>) '
+                + 'against the other. Now SELECT ON pulls COM down and SELECT OFF drives '
+                + 'it high.',
+                'Wire <b>A</b> to SELECT and <b>COM</b> to <b>Q</b>.',
             ],
-            hint: 'One mux does it. Its control is the input; −V goes on the pin behind '
-                + 'the corner you wired and +V behind the other, then COM goes to the '
-                + 'output.',
+            hint: 'One mux does it. SELECT is the input; −V goes on the pin diagonally '
+                + 'across from SELECT and +V on the other, then COM goes to the output.',
             inputs: ['A'], outputs: ['Q'], w: 20, h: 13,
             truth: (v) => ({ Q: v.A ? 0 : 1 }),
         },

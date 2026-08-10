@@ -21,7 +21,7 @@
 // not remove it because it looks unused.
 
 const CACHE_VERSION = 'v5';
-const BUILD = 'f9d08d3';
+const BUILD = '4b7dc83';
 const CACHE_NAME = `pixelogic-pcb-${CACHE_VERSION}-${BUILD}`;
 
 const ASSETS = [
@@ -37,6 +37,8 @@ const ASSETS = [
     './icon-192.png',
     './icon-512.png',
     './icon-maskable-512.png',
+    './favicon-32.png',
+    './favicon-64.png',
 ];
 
 self.addEventListener('install', (event) => {
