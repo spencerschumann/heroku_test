@@ -355,24 +355,99 @@
     // Is `to` in the same electrical net as `from`? Walks wire and whole
     // multi-cell nodes, and enters a cell only through a face that actually
     // connects — a mux is reachable through its leads and nowhere else.
+    // A crossing passes STRAIGHT through. A 4-way junction of wire is not a
+    // junction in this world, it is two runs going over each other, so the
+    // walk carries the direction it arrived by and may only leave a crossover
+    // the way it came in. Turning a corner there had the whole machinery
+    // believe two nets that merely cross were joined: a drag that cut a
+    // connection and laid a route across the remains reported nothing owed,
+    // and the circuit quietly stopped working. `hit(cell, through)` is called
+    // for every cell reached — `through` says whether the walk continues past
+    // it — and returning true stops the walk.
+    function walkNet(fromIdx, hit) {
+        const fx = fromIdx % GRID_W, fy = (fromIdx - fx) / GRID_W;
+        const seen = new Set(), stack = [];
+        for (let d = 0; d < 4; d++) stack.push([fx, fy, d]);
+        while (stack.length) {
+            const [x, y, d] = stack.pop();
+            const [dx, dy] = DIRS[d];
+            const nx = x + dx, ny = y + dy;
+            if (!inBounds(nx, ny)) continue;
+            const ci = idx(x, y), ni = idx(nx, ny);
+            if (!cellConnects(x, y, [dx, dy]) || !cellConnects(nx, ny, [-dx, -dy])) continue;
+            const cross = isCrossoverAt(nx, ny);
+            const key = cross ? ni + (dx !== 0 ? 'h' : 'v') : ni;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const through = passesThrough(ci, ni);
+            if (hit(ni, through)) return true;
+            if (!through) continue;
+            if (cross) { stack.push([nx, ny, d]); continue; }
+            for (let nd = 0; nd < 4; nd++) stack.push([nx, ny, nd]);
+        }
+        return false;
+    }
+
     function netReaches(fromIdx, toIdx) {
         if (fromIdx === toIdx) return true;
-        const seen = new Set([fromIdx]), stack = [fromIdx];
-        while (stack.length) {
-            const ci = stack.pop();
+        return walkNet(fromIdx, (ci) => ci === toIdx);
+    }
+
+    // Every cell electrically joined to `from`, itself included — the same
+    // walk netReaches does, run to completion instead of stopping at a target.
+    //
+    // Only cells the walk PASSES THROUGH are in it. A cell it merely arrives
+    // at is where the net ends, and that cell belongs to whatever is on the
+    // other side: an LED does not conduct, so two runs meeting the same lamp
+    // are two nets, and counting the lamp in both had them read as touching.
+    // The ratsnest drew the resulting link as a dot.
+    function netCellsOf(fromIdx) {
+        const out = new Set([fromIdx]);
+        walkNet(fromIdx, (ci, through) => { if (through) out.add(ci); return false; });
+        return out;
+    }
+
+    // A name for the thing an endpoint sits on, the same from either end: the
+    // lowest cell of the WIRE it is attached to, or the cell itself when it
+    // has no wire. Naming it by the whole net instead does not commute — a
+    // mux pin's net takes in the run soldered to its lead, while that run's
+    // net stops short of the pin — so the same owed connection got two
+    // different names depending on which end it was filed under, and came out
+    // as two dashed lines lying on top of each other.
+    function wireNetKey(ci) {
+        let m = -1;
+        for (const c of netCellsOf(ci)) if (isWireId(cells[c]) && (m < 0 || c < m)) m = c;
+        return m < 0 ? ci : m;
+    }
+
+    // Does this net end on anything — a pad, a pin, a source?
+    function netHasTerminal(net) {
+        for (const ci of net) {
+            if (!isWireId(cells[ci])) return true;
             const cx = ci % GRID_W, cy = (ci - cx) / GRID_W;
             for (const [dx, dy] of DIRS) {
                 const nx = cx + dx, ny = cy + dy;
-                if (!inBounds(nx, ny)) continue;
-                const ni = idx(nx, ny);
-                if (seen.has(ni)) continue;
-                if (!cellConnects(cx, cy, [dx, dy]) || !cellConnects(nx, ny, [-dx, -dy])) continue;
-                if (ni === toIdx) return true;
-                seen.add(ni);
-                if (passesThrough(ci, ni)) stack.push(ni);
+                if (!inBounds(nx, ny) || isWireId(cells[idx(nx, ny)])) continue;
+                if (cellConnects(cx, cy, [dx, dy]) && cellConnects(nx, ny, [-dx, -dy])) return true;
             }
         }
         return false;
+    }
+
+    // Wire that reaches no terminal at all — a run joined to nothing at
+    // either end. Not the same as a dangling stub, which still has a pad or a
+    // pin on one end and is a perfectly ordinary thing to have drawn; this is
+    // the piece a move can cut adrift when it absorbs the middle of a run or
+    // gives up half way through re-routing one, and it is pure litter.
+    function orphanWire() {
+        const out = new Set(), seen = new Set();
+        for (let i = 0; i < cells.length; i++) {
+            if (!isWireId(cells[i]) || seen.has(i)) continue;
+            const net = netCellsOf(i);
+            for (const ci of net) seen.add(ci);
+            if (!netHasTerminal(net)) for (const ci of net) out.add(ci);
+        }
+        return out;
     }
 
     function prunePendingLinks() {
@@ -383,21 +458,63 @@
             if (!cellConnects(ax, ay) || !cellConnects(bx, by)) return false; // an end was erased
             return !netReaches(a, b);                                         // or it got joined
         };
-        pendingLinks = pendingLinks.filter(live);
+        // One line per pair of NETS. Links are owed by one move at a time but
+        // outlive it, and editing the board rearranges what is joined to
+        // what, so two links laid down separately can end up saying the same
+        // thing — a net drawn out to meet a second pin now owes that pin and
+        // its neighbour the same single connection.
+        const seen = new Set();
+        const single = ([a, b]) => {
+            const ka = wireNetKey(a), kb = wireNetKey(b);
+            if (ka === kb) return false;
+            const k = Math.min(ka, kb) + ':' + Math.max(ka, kb);
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+        };
+        pendingLinks = pendingLinks.filter((l) => live(l) && single(l));
     }
 
-    // Endpoint form for the view, in fractional cells. A mux terminal is
-    // reported at its lead's FACE rather than its cell center, so the line
-    // starts where the connection would actually land instead of floating
-    // inside the package.
+    // Endpoint form for the view, in fractional cells.
+    //
+    // A link is stored between two TERMINALS — the mux lead and the pad or
+    // pin at the far end — because those are the two things that are still
+    // the same thing after an edit. What it is DRAWN between is the closest
+    // approach of the two NETS those terminals sit on: the connection is owed
+    // to the net, not to the pad at the end of it, so the line should land on
+    // the wire you have already run rather than fly past it to the pad. That
+    // also makes the ratsnest live while you draw — each cell of wire you add
+    // toward the part shortens the line, until it touches and the link goes.
+    //
+    // A mux terminal reports at its lead's FACE rather than its cell centre,
+    // so the line starts where the connection would actually land instead of
+    // floating inside the package.
     function pendingLinkList() {
-        const endpoint = (i) => {
+        const face = (i) => {
             const x = i % GRID_W, y = (i - i % GRID_W) / GRID_W;
             const role = roles[i];
             if (role && role.lead) return [x + role.lead[0] / 2, y + role.lead[1] / 2];
             return [x, y];
         };
-        return pendingLinks.map(([a, b]) => [endpoint(a), endpoint(b)]);
+        return pendingLinks.map(([a, b]) => {
+            // Copper both sides share is nobody's closest approach. Two runs
+            // that meet the same lamp are two nets — a lamp does not conduct —
+            // but the lamp's own cells sit on both of them, and letting either
+            // side anchor there drew the line as a dot on top of the lamp.
+            const A = netCellsOf(a), B = netCellsOf(b);
+            const as = [...A].filter((i) => !B.has(i) || i === a);
+            const bs = [...B].filter((i) => !A.has(i) || i === b);
+            let best = null, bestD = Infinity;
+            for (const p of as) {
+                const px = p % GRID_W, py = (p - px) / GRID_W;
+                for (const q of bs) {
+                    const qx = q % GRID_W, qy = (q - qx) / GRID_W;
+                    const d = (px - qx) ** 2 + (py - qy) ** 2;
+                    if (d < bestD) { bestD = d; best = [p, q]; }
+                }
+            }
+            return best ? [face(best[0]), face(best[1])] : [face(a), face(b)];
+        });
     }
 
     // ===== Box mux: the second mux style =====
@@ -977,10 +1094,17 @@
         return id === ID_INSULATOR_PLAIN || (id >= ID_CONDUCTOR_BASE && id <= ID_TOGGLE_ON);
     }
 
+    // Pending links ride along. They are the one thing here not derivable
+    // from the pixels, so a restore that put back only cells left them
+    // behind — and a drag restamps on every pointer move (restore the base,
+    // re-apply the whole offset), which prunes the links the board already
+    // owed as their mux end moves out from under them. Escape, undo and
+    // starting a second drag all come through here, and all three want the
+    // ratsnest the board had at that moment.
     function getStructuralSnapshot() {
         const data = new Uint8Array(cells.length);
         for (let i = 0; i < cells.length; i++) data[i] = stripId(cells[i]);
-        return { w: GRID_W, h: GRID_H, data };
+        return { w: GRID_W, h: GRID_H, data, links: pendingLinks.map((l) => l.slice()) };
     }
 
     // When the grid size is unchanged, only touch cells whose structure differs,
@@ -996,7 +1120,8 @@
             resizeGrid(snap.w, snap.h, 0, 0, false);
             cells.set(snap.data);
         }
-        recomputeRoles();
+        pendingLinks = (snap.links || []).map((l) => l.slice());
+        recomputeRoles();   // prunes anything the restored grid already satisfies
     }
 
     function normalizeRect(x0, y0, x1, y1) {
@@ -1446,8 +1571,13 @@
         return Math.abs(ax - bx) + Math.abs(ay - by);
     }
     // Tuned so an ordinary detour around one obstacle still routes, while a
-    // lap of the board does not.
-    const ROUTE_SLACK = 3, ROUTE_STRETCH = 1.6;
+    // lap of the board does not. Held fairly tight on purpose: a route much
+    // longer than the gap it bridges is not a connection the user would
+    // recognise as theirs, it is decoration, and a dashed line they can draw
+    // where they actually want it is the better answer. On the move sweep,
+    // 1.6 let 29 moves add 21 or more cells of wire; 1.25 lets 22, and costs
+    // four of 1351 moves their automatic re-route.
+    const ROUTE_SLACK = 3, ROUTE_STRETCH = 1.25;
     function routeNet(seedIdxs, targetSet, netCells, terminalCells, volatileCells) {
         const free = (x, y) => inBounds(x, y) && isInsulatorId(cells[idx(x, y)]);
         // A mux gets a one-cell berth on EVERY face. All of them say what the
@@ -1702,10 +1832,16 @@
         // re-check those after the move. This is what catches a connection
         // lost to the shrink pass or to a route that satisfied a different
         // contract; the router's own `unrouted` count sees none of it.
+        // `netKey` is what the contact was attached TO, before anything moved.
+        // A net that runs alongside the object touches it at every cell it
+        // passes, and a drag that takes a mux together with the wire feeding
+        // it meets that net at the wire AND at the pin — so one connection
+        // arrives here as several contacts. They are the same owed thing, and
+        // the pre-move net is what says so.
         const contactTerminals = contacts.map((c) => {
             const net = floodNet(c.anchor[0], c.anchor[1], c.entry[0], c.entry[1]);
             const ts = [...net.terminals].filter((t) => !objSet.has(t));
-            return { objCell: idx(c.objCell[0], c.objCell[1]), terminals: ts };
+            return { objCell: idx(c.objCell[0], c.objCell[1]), terminals: ts, netKey: net.key };
         });
 
         const moved = transformObjectCells(objCells, dx, dy, quarterTurns);
@@ -1765,6 +1901,12 @@
             if (isWireId(cells[di])) { overlaps.push({ di, movedIsWire: isWireId(ids[i]) }); continue; }
             return { ok: false }; // something solid in the way
         }
+
+        // Wire that already led nowhere before the move. A run with no
+        // terminal on it at either end is the user's business — they may be
+        // half-way through drawing it — so the litter sweep at the end has to
+        // know which orphans it inherited and which ones it made.
+        const preOrphans = orphanWire();
 
         // Lift the object so the net floods see only the stationary world.
         for (const [x, y] of objCells) cells[idx(x, y)] = ID_INSULATOR_PLAIN;
@@ -1919,7 +2061,9 @@
             }
             return { wires, touched };
         };
-        const runContract = (c) => {
+        // One pass at a contract, laying whatever routes it needs. Returns the
+        // pair it could not join, or null when everything got through.
+        const attemptContract = (c) => {
             const comp = components.get(c.compKey);
             // What has to end up joined to the object's node. A net with no
             // terminals at all (wire dead-ending on the object) just has to
@@ -1936,7 +2080,15 @@
                 const mustJoin = comp.terminals.size ? [...comp.terminals]
                     : [...comp.cells].filter((ci) => !isWireId(cells[ci]));
                 if (!mustJoin.length && comp.cells.size) mustJoin.push([...comp.cells][0]);
-                const want = mustJoin.filter((t) => !at.touched.has(t) && !at.wires.has(t));
+                // By NODE, not by cell. A pad is one terminal however many
+                // cells it spans, so reaching any one of them settles all of
+                // them — asking cell by cell had a 3x3 switch demand four
+                // separate routes, three of which were laid around the back
+                // of it and then left dangling because nothing needed them.
+                const keyOf = (ci) => anchorNode(ci % GRID_W, Math.floor(ci / GRID_W)).key;
+                const had = new Set([...at.touched].map(keyOf));
+                const want = mustJoin.filter((t) =>
+                    !at.touched.has(t) && !at.wires.has(t) && !had.has(keyOf(t)));
                 if (!want.length) break;
                 const from = want[0];
                 const island = floodFrom([from]);
@@ -1952,20 +2104,63 @@
                 // honest answer is a dashed link: the connection is owed, and
                 // they can draw it where they actually want it.
                 if (path && path.length > ROUTE_SLACK + ROUTE_STRETCH * pathSpan(path)) path = null;
-                if (!path) {
-                    // Which two things this contract failed to join. The
-                    // immediate contact next door is often still touching —
-                    // what got orphaned is the terminal at the far end of the
-                    // net, which is what the dashed line has to point at.
-                    unrouted++; comp.failed = true;
-                    owedPairs.push([from, [...c.targets][0]]);
-                    break;
-                }
+                // Which two things this contract failed to join. The immediate
+                // contact next door is often still touching — what got
+                // orphaned is the terminal at the far end of the net, which is
+                // what the dashed line has to point at.
+                if (!path) return [from, [...c.targets][0]];
                 for (const [px, py] of path) {
                     cells[idx(px, py)] = makeConductor(OFF);
                     comp.routed.add(idx(px, py));
                 }
             }
+            return null;
+        };
+
+        // Re-routing has so far only ever ADDED wire: it keeps whatever the
+        // net already had and looks for a corridor from there to the part's
+        // new position. On a board with any density that fails constantly —
+        // the run that used to reach the pin is now in the way of the run that
+        // needs to reach it, and the only path left is a lap of the layout.
+        //
+        // So when a contract can't be met as it stands, the net's own wire is
+        // fair game: rip it up and lay the connection again from the terminal.
+        // The user drew a wire to say "these two are joined", not to say
+        // "these particular cells are wire", and moving a run they can see is
+        // far less surprising than a dashed line saying it gave up. What is
+        // NOT fair game is anything that holds meaning of its own — the
+        // terminals, the object's own cells, another net's route, and stubs
+        // that were already dangling before the move (drawn on purpose).
+        //
+        // All or nothing: if the re-lay does not fully satisfy the contract,
+        // the board goes back exactly as it was and the connection is owed
+        // instead. A half-ripped net is worse than either outcome.
+        const ripAndRelay = (c) => {
+            const comp = components.get(c.compKey);
+            const spared = new Set([...comp.terminals, ...(comp.preDangling || []), ...movedSet]);
+            const rip = [...comp.cells].filter((ci) => isWireId(cells[ci]) && !spared.has(ci));
+            if (!rip.length) return null;
+            const before = cells.slice();
+            const beforeCells = new Set(comp.cells), beforeRouted = new Set(comp.routed);
+            // Deliberately no recomputeRoles here: the roles belong to the
+            // object as PLACED, and re-reading the board mid-rip would show
+            // the router a mux whose own commissioning wire has just been
+            // lifted. Only `cells` changes, which is all routeNet reads for
+            // free space.
+            for (const ci of rip) { cells[ci] = ID_INSULATOR_PLAIN; comp.cells.delete(ci); }
+            const failed = attemptContract(c);
+            if (!failed) return null;
+            cells.set(before);
+            comp.cells = beforeCells;
+            comp.routed = beforeRouted;
+            return failed;
+        };
+
+        const runContract = (c) => {
+            const comp = components.get(c.compKey);
+            let failed = attemptContract(c);
+            if (failed) failed = ripAndRelay(c);
+            if (failed) { unrouted++; comp.failed = true; owedPairs.push(failed); }
         };
 
         // Contracts compete for the same free space, so the order they are
@@ -1996,24 +2191,33 @@
         // that moved. The object's own cells and pre-existing dangles are
         // kept, and a net whose contract couldn't be re-routed is left
         // untouched rather than made worse.
+        //
+        // One pass over ALL the object's nets together rather than one at a
+        // time. Two contracts' routes legitimately meet — everything wired to
+        // a dragged WIRE ends up on that one node, so the second route can
+        // reach the object by joining the first — and a net examined on its
+        // own cannot see that: it read as a run joining a pad at one end to
+        // nothing at the other, and pruned away a connection the router had
+        // genuinely made. Handing reduceNet the union is safe, since it only
+        // ever removes and only ever preserves which node reaches which;
+        // pieces disjoint on the board stay disjoint here.
         const shrinkNets = () => {
+            // Only wire is prunable; a component's own non-wire cells (the
+            // pin or pad it stands for) are things the net must stay on.
+            const net = new Set(), required = new Set(capableMoved), keep = new Set(movedSet);
             for (const comp of components.values()) {
                 if (comp.failed) continue;
-                // Only wire is prunable; a component's own non-wire cells (the
-                // pin or pad it stands for) are things the net must stay on.
-                const net = new Set(), required = new Set(capableMoved);
                 for (const ci of comp.cells) (isWireId(cells[ci]) ? net : required).add(ci);
                 for (const ci of comp.routed) net.add(ci);
                 for (const t of comp.terminals) required.add(t);
-                const keep = new Set([...(comp.preDangling || []), ...movedSet]);
-                for (const ci of reduceNet(net, required, keep, nodeIdFor(nodeOfMoved))) {
-                    if (!isWireId(cells[ci])) continue;
-                    cells[ci] = ID_INSULATOR_PLAIN;
-                    // Keep the bookkeeping honest: a cell that is gone must
-                    // not come back as a "required" anchor on a later pass.
-                    comp.cells.delete(ci);
-                    comp.routed.delete(ci);
-                }
+                for (const ci of comp.preDangling || []) keep.add(ci);
+            }
+            for (const ci of reduceNet(net, required, keep, nodeIdFor(nodeOfMoved))) {
+                if (!isWireId(cells[ci])) continue;
+                cells[ci] = ID_INSULATOR_PLAIN;
+                // Keep the bookkeeping honest: a cell that is gone must not
+                // come back as a "required" anchor on a later pass.
+                for (const comp of components.values()) { comp.cells.delete(ci); comp.routed.delete(ci); }
             }
         };
         const preRoute = cells.slice();
@@ -2050,6 +2254,24 @@
         }
         shrinkNets();
         recomputeRoles();
+
+        // Litter sweep. The shrink pass above works net by net and leaves a
+        // net whose contract failed alone, quite deliberately — but that is
+        // exactly the case that strands wire: the far half of a run whose
+        // middle the part absorbed, or the remains of a crossing whose other
+        // axis moved out from under it, left joined to nothing at either end.
+        // Anything the move itself cut adrift goes; anything that was already
+        // adrift, and anything the object brought with it, stays.
+        {
+            const gone = [];
+            for (const ci of orphanWire())
+                if (!preOrphans.has(ci) && !movedSet.has(ci)) gone.push(ci);
+            if (gone.length) {
+                for (const ci of gone) cells[ci] = ID_INSULATOR_PLAIN;
+                recomputeRoles();
+            }
+        }
+
         // Identity is not negotiable the way routing is: a part that ends up
         // reading as something else is not the part you dragged, so that one
         // still refuses outright.
@@ -2072,38 +2294,49 @@
         // that looked already-satisfied. Whatever did not survive is owed,
         // and becomes a dashed line instead of vanishing silently.
         const owed = new Map();
-        // The two sources below name the same broken connection by different
-        // cells — the router reports the mux PIN it could not reach, the
-        // terminal re-check reports the little stub soldered onto that pin
-        // and dragged along with it. Both are the same node, so a link is
-        // filed under the lead it lands on: one dashed line per connection,
-        // anchored on the package edge rather than floating out at the stub.
-        const solderedTo = (ci) => {
-            const x = ci % GRID_W, y = (ci - x) / GRID_W;
-            for (const [ddx, ddy] of DIRS) {
-                const bx = x + ddx, by = y + ddy;
-                if (!inBounds(bx, by) || !isGrayId(cells[idx(bx, by)])) continue;
-                const br = roles[idx(bx, by)];
-                if (br && br.macro && br.lead && br.lead[0] === -ddx && br.lead[1] === -ddy) return idx(bx, by);
-            }
-            return ci;
-        };
+        // ONE dashed line per pair of NETS, not per pair of cells.
+        //
+        // The same broken connection gets named several different ways. The
+        // router reports the mux pin it could not reach while the terminal
+        // re-check reports the stub soldered onto that pin and dragged along
+        // with it. A net that runs alongside the object touches it at every
+        // cell it passes, so it is recorded as that many contacts. And when a
+        // drag takes a mux together with the wire feeding it, a switch at the
+        // far end was joined to BOTH — one connection through two of the
+        // object's nodes, which came out as two dashed lines fanning off the
+        // same switch.
+        //
+        // So a link is filed under the two nets its ends sit on, each named
+        // by its lowest cell index. Whatever else is on those nets, they owe
+        // each other exactly one connection.
+        const netKey = wireNetKey;
         const oweLink = (a, b) => {
             if (a === undefined || b === undefined) return;
-            const a2 = solderedTo(newIdxOf.has(a) ? newIdxOf.get(a) : a);
-            const b2 = solderedTo(newIdxOf.has(b) ? newIdxOf.get(b) : b);
-            if (a2 === b2 || netReaches(a2, b2)) return;
+            const a2 = newIdxOf.has(a) ? newIdxOf.get(a) : a;
+            const b2 = newIdxOf.has(b) ? newIdxOf.get(b) : b;
+            if (a2 === b2 || netReaches(a2, b2)) return false;
             const ax = a2 % GRID_W, ay = (a2 - ax) / GRID_W;
             const bx = b2 % GRID_W, by = (b2 - bx) / GRID_W;
-            if (!cellConnects(ax, ay) || !cellConnects(bx, by)) return; // an end was erased
-            owed.set(Math.min(a2, b2) + ':' + Math.max(a2, b2), [a2, b2]);
+            if (!cellConnects(ax, ay) || !cellConnects(bx, by)) return false; // an end was erased
+            const ka = netKey(a2), kb = netKey(b2);
+            if (ka === kb) return false;                                      // one net, already joined
+            owed.set(Math.min(ka, kb) + ':' + Math.max(ka, kb), [a2, b2]);
+            return true;
         };
         // What the router itself reported it could not join, re-checked in
         // case another contract's path happened to satisfy it anyway.
         for (const [a, b] of owedPairs) oweLink(a, b);
+        // ...and every terminal each contact was attached to, once per
+        // (pre-move net, terminal). Several contacts on one net are one
+        // connection however the move pulled its ends apart.
+        const claimed = new Set();
         for (const ct of contactTerminals) {
             if (!newIdxOf.has(ct.objCell)) continue;
-            for (const t0 of ct.terminals) oweLink(ct.objCell, t0);
+            for (const t0 of ct.terminals) {
+                const k = ct.netKey + '#' + t0;
+                if (claimed.has(k)) continue;
+                if (oweLink(ct.objCell, t0)) claimed.add(k);
+            }
         }
         for (const link of owed.values()) pendingLinks.push(link);
 
